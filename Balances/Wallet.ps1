@@ -59,8 +59,8 @@ $Wallets_Data = @(
     [PSCustomObject]@{symbol = "ZEC";  match = "^t";    rpc = "https://api.zcha.in/v2/mainnet/accounts/{w}";                          address = "address";                          balance = "balance";                         received = "totalRecv";                        divisor = 1}
 	[PSCustomObject]@{symbol = "XRP";  match = "^r";    rpc = "https://api.xrpscan.com/api/v1/account/{w}";                           address = "account";                          balance = "xrpBalance";                      received = "";                                 divisor = 1}
 	[PSCustomObject]@{symbol = "XTZ";  match = "^tz";   rpc = "https://api.blockchair.com/tezos/raw/account/{w}";                     address = "data.{w}.account.address";         balance = "data.{w}.account.total_balance";  received = "data.{w}.account.total_received";  divisor = 1}
-    [PSCustomObject]@{symbol = "DASH";  match = "^Xn";  rpc = "https://api.blockcypher.com/v1/dash/main/addrs/{w}";                   address = "address";                          balance = "balance";                         received = "total_received";                   divisor = 1}
-    [PSCustomObject]@{symbol = "DOGE";  match = "^D";   rpc = "https://api.blockcypher.com/v1/doge/main/addrs/{w}";                   address = "address";                          balance = "balance";                         received = "total_received";                   divisor = 1}
+    [PSCustomObject]@{symbol = "DASH";  match = "^Xn";  rpc = "https://api.blockcypher.com/v1/dash/main/addrs/{w}";                   address = "address";                          balance = "balance";                         received = "total_received";                   divisor = 1e8}
+    [PSCustomObject]@{symbol = "DOGE";  match = "^D";   rpc = "https://api.blockcypher.com/v1/doge/main/addrs/{w}";                   address = "address";                          balance = "balance";                         received = "total_received";                   divisor = 1e8}
     )
 
 foreach ($Wallet_Data in $Wallets_Data) {
