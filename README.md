@@ -23,7 +23,7 @@ Features: easy setup wizard with adhoc working default (no editing of files need
 
 - **Multi-Platform (AMD, NVIDIA, CPU) on Windows and Linux**
 - **Profit auto-switch between mining programs and [algorithm](https://rbminer.net/algorithms/) for GPUs & CPUs (optimized one for each vendor vs. one for each possible device combination)**
-- **Profit auto-switch between pools (2Miners, 572133Club, 666Pool, 6Block, Acepool, AHashPool, BaikalMiner, BeePool, Binance, BlazePool, BlockCruncher, BlockMasters, Bsod, BtcPrivate, Cortexmint, EthashPool, Ethermine, F2pool, FairPool, FlyPool, GosCx, GrinMint, Hashcryptos, Hashpool, HashVault, [HeroMiners](https://herominers.com), Hiveon, Icemining, LeafPool, LuckPool, LuckyPool, MinerRocks, MiningDutch, MiningPoolHub, MiningPoolOvh, [MiningRigRentals](https://www.miningrigrentals.com?ref=2598069), Mintpond, MoneroOcean, Nanopool, Nicehash, PhiPhiPool, Poolin, Poolium, PoolmineXyz, Ravenminer, Ravepool, SoloPool, SparkPool, Sunpool, SuprNova, UUpool, WoolyPooly, ZelLabs, Zergpool and Zpool)**
+- **Profit auto-switch between pools (2Miners, 572133Club, 666Pool, 6Block, Acepool, AHashPool, BaikalMiner, BeePool, Binance, BlazePool, BlockCruncher, BlockMasters, Bsod, BtcPrivate, Cortexmint, EthashPool, Ethermine, F2pool, FairPool, FlyPool, GosCx, GrinMint, Hashcryptos, Hashpool, HashVault, [HeroMiners](https://herominers.com), Hiveon, Icemining, LeafPool, LuckPool, LuckyPool, MinerRocks, MiningDutch, MiningPoolHub, MiningPoolOvh, [MiningRigRentals](https://www.miningrigrentals.com?ref=2598069), Mintpond, MoneroOcean, Nanopool, Nicehash, PhiPhiPool, Poolin, Poolium, PoolmineXyz, Ravenminer, SoloPool, SparkPool, Sunpool, SuprNova, UUpool, WoolyPooly, ZelLabs, Zergpool and Zpool)**
 - **Integrate own and custom pools**
 - **Profit calculation, including real cost of electricity per miner**
 - **Uses the top actual available miner programs (Bminer, Ccminer, Claymore, CryptoDredge, Dstm, EnemyZ, Ewbf, Gminer, NBminer, Sgminer, SrbMiner, T-Rex, Xmrig and many more)**
@@ -47,9 +47,9 @@ Features: easy setup wizard with adhoc working default (no editing of files need
 - **Central monitoring of all your rigs at [https://rbminer.net](https://rbminer.net)**
 - **Offline notifications via email and/or https://pushover.net**
 
-## REQUIRED PRE-REQUESITES
+## REQUIRED PRE-REQUISITES
 
-### Windows 7/8.1/10 pre-requesites
+### Windows 7/8.1/10 pre-requisites
 
 1. Install PowerShell 7: [Download Installer for version 7.1.2](https://github.com/PowerShell/PowerShell/releases/download/v7.1.2/PowerShell-7.1.2-win-x64.msi)
 2. Install Microsoft .NET Framework 4.7.2 or later: [Web Installer](https://www.microsoft.com/net/download/dotnet-framework-runtime)
@@ -65,7 +65,7 @@ Finally: check, if Powershell 7 is in your PATH, because RainbowMiner will not r
 A note on Windows Nvidia drivers. Recommended lite-packed versions are available for direct download:
 
 
-### Ubuntu 18.x Pre-requesites
+### Ubuntu 18.x Pre-requisites
 (This section is WIP! Want to help? Make an [issue](https://github.com/RainbowMiner/RainbowMiner/issues) or a [PR](https://github.com/RainbowMiner/RainbowMiner/pulls)))
 
 Debian-based distros will be more-or-less the same as these instructions.
@@ -234,7 +234,7 @@ Alternative: start as Linux `screen`:
 
 ### Done!
 
-<details><summary>Valid poolnames</summary>2Miners, 2MinersSolo, 572133Club, 666Pool, 6Block, Acepool, AHashPool, Aionmine, BaikalMine, BaikalMineSolo, BeePool, Binance, BlazePool, BlockMasters, BlockMastersCoins, Bsod, BsodParty, BsodSolo, BtcPrivate, Cortexmint, CpuPool, EthashPool, Ethermine, F2pool, FairPool, FlyPool, GosCx, GosCxParty, GosCxSolo, Grinmint, Hashcryptos, Hashpool, HashVault, HeroMiners, Hiveon, Icemining, LeafPool, LuckPool, LuckyPool, Luxor, MinerRocks, Minexmr, MiningDutch, MiningDutchCoins, MiningPoolHub, MiningPoolHubCoins, MiningPoolOvh, MiningRigRentals, Mintpond, MoneroOcean, Nanopool, NiceHash, NLpool, PhiPhiPool, Poolin, Poolium, PoolmineXyz, PoolmineXyzSolo, PoolSexy, Ravenminer, Ravepool, RPlant, SoloPool, SparkPool, Sunpool, SuprNova, Tecracoin, UUpool, WhatToMine, WoolyPooly, WoolyPoolySolo, ZelLabs, ZergPool, ZergPoolCoins, ZergPoolCoinsParty, ZergPoolCoinsSolo, ZergPoolParty, ZergPoolSolo, Zpool, ZpoolCoins</details>
+<details><summary>Valid poolnames</summary>2Miners, 2MinersSolo, 572133Club, 666Pool, 6Block, Acepool, AHashPool, Aionmine, BaikalMine, BaikalMineSolo, BeePool, Binance, BlazePool, BlockMasters, BlockMastersCoins, Bsod, BsodParty, BsodSolo, BtcPrivate, Cortexmint, CpuPool, EthashPool, Ethermine, F2pool, FairPool, FlyPool, GosCx, GosCxParty, GosCxSolo, Grinmint, Hashcryptos, Hashpool, HashVault, HeroMiners, Hiveon, Icemining, LeafPool, LuckPool, LuckyPool, Luxor, MinerRocks, Minexmr, MiningDutch, MiningDutchCoins, MiningPoolHub, MiningPoolHubCoins, MiningPoolOvh, MiningRigRentals, Mintpond, MoneroOcean, Nanopool, NiceHash, NLpool, PhiPhiPool, Poolin, Poolium, PoolmineXyz, PoolmineXyzSolo, PoolSexy, Ravenminer, RPlant, SoloPool, SparkPool, Sunpool, SuprNova, Tecracoin, UUpool, WhatToMine, WoolyPooly, WoolyPoolySolo, ZelLabs, ZergPool, ZergPoolCoins, ZergPoolCoinsParty, ZergPoolCoinsSolo, ZergPoolParty, ZergPoolSolo, Zpool, ZpoolCoins</details>
 <details><summary>Valid algorithms</summary> Balloon, Bitcore, Blakecoin, Blake2s, BlakeVanilla, C11, Cortex, CryptoNightV8, Cuckaroo29, Cuckaroo29s, Ethash, X11, Decred, Equihash, Equihash144, Equihash192, Equihash-BTG, Groestl, Hex, HMQ1725, HSR, JHA, Keccak, Lbry, Lyra2RE2, Lyra2z, MyriadGroestl, NeoScrypt, Pascal, Phi, Phi2, Polytimos, Quark, Qubit, Scrypt, SHA256, Sib, Skunk, Skein, Tensority, Timetravel, Tribus, Veltor, X11, X12, X11evo, X16R, X16S, X17, X18, X21s, X22i, Yescrypt and many more: https://rbminer.net/algorithms/</details>
 
 ## HOTKEYS
@@ -423,7 +423,6 @@ If "EnableServerPools" is set to "1", the client will download the server's pool
 <details><summary>PoolmineXyzSolo</summary> https://poolmine.xyz/ no auto-exchange, a separate wallet address is needed for each coin you want to mine solo. Set in pools configuration or edit pools.config.txt</details>
 <details><summary>PoolSexy</summary> https://pool.sexy/ no auto-exchange, mostly DaggerHashimoto (ethash) mined coins, a separate wallet address is needed for each coin you want to mine. Set in pools configuration or edit pools.config.txt</details>
 <details><summary>Ravenminer</summary> https://www.ravenminer.com/ ravencoin-pool for us region, pays in RVN, set your RVN-address in pools configuration or edit pools.config.txt</details>
-<details><summary>Ravepool</summary> https://grimm.ravepool.com/ Grimm mining-pool for us region, pays in XGM, set your XGM-address in pools configuration or edit pools.config.txt</details>
 <details><summary>Rplant</summary> https://pool.rplant.xyz/ specialized on CPU mining, no auto-exchange, a separate wallet is needed for each coin you want to mine. Set in pools configuration or edit pools.config.txt</details>
 <details><summary>SoloPool</summary> https://solopool.org/ no auto-exchange, solo mining, only. A separate wallet address is needed for each coin you want to mine. Set in pools configuration or edit pools.config.txt</details>
 <details><summary>SparkPool</summary> https://sparkpool.com/ no auto-exchange, a separate wallet address is needed for each coin you want to mine. Set in pools configuration or edit pools.config.txt</details>
