@@ -34,12 +34,11 @@ $PoolBlocks_Page = 0
 
     while($PoolBlocks_Page -lt $PoolBlocks_TotalPages -or $PoolBlocks_Page -eq 0){
         try {
-        $Pool_BlocksResult = Invoke-RestMethodAsync "https://flexpool.io/api/v1/pool/blocks?page=$PoolBlocks_Page" -retry 3 -retrywait 500 -tag $Name -cycletime 120
+        $Pool_BlocksResult = Invoke-RestMethodAsync "https://flexpool.io/api/v1/pool/blocks?page=$PoolBlocks_Page" -retry 3 -retrywait 1000 -tag $Name -cycletime 180
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Warn "Pool Blocks API ($Name) has failed. "
-            return
         }
         if($PoolBlocks_Page -eq 0){
             $Pool_Blocks_data = $Pool_BlocksResult.result
@@ -51,11 +50,12 @@ $PoolBlocks_Page = 0
     }
 
 $Pool_Currency = "ETH"
-$Pool_Algorithm = "Ethash"
 
-$Pool_Coin = "ETH"
+
+$Pool_Coin = Get-Coin $Pool_Currency
 $Pool_Host = "flexpool.io"
-$Pool_Algorithm_Norm = "Ethash"
+$Pool_Algorithm = Get-Algorithm $Pool_Coin.Algo
+$Pool_Algorithm_Norm = Get-Algorithm $Pool_Coin.Algo
 
 $timestamp    = [int](Get-Date -UFormat %s)
 $timestamp24h = $timestamp - 24*3600
@@ -73,7 +73,7 @@ $btcRewardLive   = if ($Pool_HashRate.result.total -gt 0) {$btcPrice * $reward *
 $Divisor         = 1
 $Hashrate        = $Pool_HashRate.result.total
 
-$Stat = Set-Stat -Name "$($Name)_$($_.symbol)_Profit" -Value ($btcRewardLive/$Divisor) -Duration $StatSpan -ChangeDetection $false -HashRate $Hashrate -BlockRate $Pool_BLK -Quiet
+$Stat = Set-Stat -Name "$($Name)_$($Pool_Currency)_Profit" -Value ($btcRewardLive/$Divisor) -Duration $StatSpan -ChangeDetection $false -HashRate $Hashrate -BlockRate $Pool_BLK -Quiet
 if (-not $Stat.HashRate_Live -and -not $AllowZero) {return}
 
 $Pool_Ports = @{
@@ -91,53 +91,54 @@ $Pool_Ports = @{
     "sa" = "eth-sa"
 }
 
-$Pool_Regions = @("us","eu","asia","sa","au")
-$Pool_Regions | Foreach-Object {$Pool_RegionsTable.$_ = Get-Region $_}
+$Regions = @("us","eu","asia","sa","au")
+$Pool_Regions = @{}
+$Regions | Foreach-Object {$Pool_Regions +=@{"$_" = (Get-Region $_)}}
 
-$Pool_Request.PSObject.Properties.Name | Where-Object {$_ -eq $Pool_Algorithm} | Foreach-Object {
-    $Pool_PoolFee = 1.0
-    $Pool_User = $Wallets.$Pool_Currency
 
-    if ($Pool_User -or $InfoOnly) {
-        foreach($Pool_Region in $Pool_Regions) {
-            foreach($Pool_Port in $Pool_Ports) {
-                [PSCustomObject]@{
-                    Algorithm     = $Pool_Algorithm_Norm
-                    Algorithm0    = $Pool_Algorithm_Norm
-                    CoinName      = $Pool_Coin.Name
-                    CoinSymbol    = $Pool_Currency
-                    Currency      = $Pool_Currency
-                    Price         = $Stat.$StatAverage #instead of .Live
-                    StablePrice   = $Stat.Week
-                    MarginOfError = $Stat.Week_Fluctuation
-                    Protocol      = "stratum+$(if ($PoolPorts.$PoolPort) {"ssl"} else {"tcp"})"
-                    Host          = "$($Pool_RegionsTable.$Pool_Region).$($Pool_Host)"
-                    Port          = $Pool_Port
-                    User          = "$($Pool_Wallet).{workername:$Worker}"
-                    Pass          = ""
-                    Region        = $Pool_Regions.$Pool_Region
-                    SSL           = $PoolPorts.$PoolPort
-                    Updated       = $Stat.Updated
-                    PoolFee       = $Pool_PoolFee
-                    DataWindow    = $DataWindow
-                    Workers       = $Pool_Workers.result
-                    Hashrate      = $Pool_HashRate.result
-                    BLK           = $Stat.BlockRate_Average
-                    TSL           = $Pool_TSL
-				    ErrorRatio    = $Stat.ErrorRatio
-                    EthMode       = "stratum"
-                    Name          = $Name
-                    Penalty       = 0
-                    PenaltyFactor = 1
-                    Disabled      = $false
-                    HasMinerExclusions = $false
-                    Price_Bias    = 0.0
-                    Price_Unbias  = 0.0
-                    Wallet        = $Wallets.$Pool_Currency
-                    Worker        = "{workername:$Worker}"
-                    Email         = $Email
-                }
+$Pool_PoolFee = 1.0
+$Pool_User = $Wallets.$Pool_Currency
+
+if ($Pool_User -or $InfoOnly) {
+    foreach($Pool_Region in $Pool_Regions.Keys) {
+        foreach($Pool_Port in $Pool_Ports.Keys) {
+            [PSCustomObject]@{
+                Algorithm     = $Pool_Algorithm
+                Algorithm0    = $Pool_Algorithm_Norm
+                CoinName      = $Pool_Coin.Name
+                CoinSymbol    = $Pool_Currency
+                Currency      = $Pool_Currency
+                Price         = $Stat.$StatAverage #instead of .Live
+                StablePrice   = $Stat.Week
+                MarginOfError = $Stat.Week_Fluctuation
+                Protocol      = "stratum+$(if ($Pool_Ports.($Pool_Port)) {"ssl"} else {"tcp"})"
+                Host          = "$($Pool_RegionsTable.($Pool_Region)).$($Pool_Host)"
+                Port          = $Pool_Port
+                User          = "$($Wallets.$Pool_Currency).{workername:$Worker}"
+                Pass          = ""
+                Region        = $Pool_Regions.$Pool_Region
+                SSL           = $Pool_Ports.$Pool_Port
+                Updated       = $Stat.Updated
+                PoolFee       = $Pool_PoolFee
+                DataWindow    = $DataWindow
+                Workers       = $Pool_Workers.result
+                Hashrate      = $Pool_HashRate.result.total
+                BLK           = $Stat.BlockRate_Average
+                TSL           = $Pool_TSL
+                ErrorRatio    = $Stat.ErrorRatio
+                EthMode       = "stratum"
+                Name          = $Name
+                Penalty       = 0
+                PenaltyFactor = 1
+                Disabled      = $false
+                HasMinerExclusions = $false
+                Price_Bias    = 0.0
+                Price_Unbias  = 0.0
+                Wallet        = $Wallets.$Pool_Currency
+                Worker        = "{workername:$Worker}"
+                Email         = $Email
             }
         }
     }
 }
+
