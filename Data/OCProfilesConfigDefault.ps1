@@ -34,6 +34,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-GTX1060' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "300"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
     'Profile1-GTX10603GB' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -66,6 +73,13 @@
         PowerLimit = 80
         ThermalLimit = 0
         MemoryClockBoost = "250"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-GTX10603GB' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "300"
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
@@ -104,6 +118,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-GTX10606GB' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "300"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
     'Profile1-GTX1070' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -136,6 +157,13 @@
         PowerLimit = 80
         ThermalLimit = 0
         MemoryClockBoost = "350"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-GTX1070' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
@@ -174,6 +202,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-GTX1070TI' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
     'Profile1-GTX1080' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -206,6 +241,13 @@
         PowerLimit = 80
         ThermalLimit = 0
         MemoryClockBoost = "350"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-GTX1080' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
@@ -244,6 +286,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-GTX1080TI' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
     'Profile1-P104100' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -276,6 +325,13 @@
         PowerLimit = 80
         ThermalLimit = 0
         MemoryClockBoost = "350"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-P104100' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
@@ -314,6 +370,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-P1041004GB' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
     'Profile1-P1041008GB' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -346,6 +409,13 @@
         PowerLimit = 80
         ThermalLimit = 0
         MemoryClockBoost = "350"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-P1041008GB' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
@@ -384,6 +454,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-P106100' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "300"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
     'Profile1-RTX2060' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -416,6 +493,13 @@
         PowerLimit = 80
         ThermalLimit = 0
         MemoryClockBoost = "250"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-RTX2060' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "300"
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
@@ -454,6 +538,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-RTX2070' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
     'Profile1-RTX2080' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -486,6 +577,13 @@
         PowerLimit = 80
         ThermalLimit = 0
         MemoryClockBoost = "350"
+        CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-RTX2080' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "400"
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
@@ -524,6 +622,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-RTX3070' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "1000"
+        CoreClockBoost = "-500"
+        LockVoltagePoint = "*"
+    }
     'Profile1-RTX3080' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -559,6 +664,13 @@
         CoreClockBoost = "100"
         LockVoltagePoint = "*"
     }
+    'Profile6-RTX3080' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "1000"
+        CoreClockBoost = "-500"
+        LockVoltagePoint = "*"
+    }
     'Profile1-RTX3090' = [PSCustomObject]@{
         PowerLimit = 0
         ThermalLimit = 0
@@ -592,6 +704,13 @@
         ThermalLimit = 0
         MemoryClockBoost = "875"
         CoreClockBoost = "100"
+        LockVoltagePoint = "*"
+    }
+    'Profile6-RTX3090' = [PSCustomObject]@{
+        PowerLimit = 80
+        ThermalLimit = 0
+        MemoryClockBoost = "1000"
+        CoreClockBoost = "-500"
         LockVoltagePoint = "*"
     }
 }

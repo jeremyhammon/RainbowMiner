@@ -5,73 +5,66 @@ param(
 )
 
 $Name = Get-Item $MyInvocation.MyCommand.Path | Select-Object -ExpandProperty BaseName
+
+$Pool_Currency = "ETH"
+
 $PoolConfig = $Config.Pools.$Name
 
-if (!$PoolConfig.ETH) {
-    Write-Log -Level Verbose "Pool Balance API ($Name) has failed - no wallet address specified."
-    return
-}
+if (-not $PoolConfig.Wallets.$Pool_Currency -or ($Config.ExcludeCoinsymbolBalances.Count -and $Config.ExcludeCoinsymbolBalances -contains $Pool_Currency)) {return}
 
-if ($Config.ExcludeCoinsymbolBalances.Count -and $Config.ExcludeCoinsymbolBalances -contains "ETH") {return}
+$ok = $false
 
-$Request = [PSCustomObject]@{}
+$Pool_BalanceRequest  = [PSCustomObject]@{}
+$Pool_TotalRequest    = [PSCustomObject]@{}
+$Pool_PaymentsRequest = [PSCustomObject]@{}
 
-$Flexpool_Host = "flexpool.io"
-
-$Pool_Divisor = 1e18
-
-$Success = $true
 try {
-    if (-not ($BalanceRequest = Invoke-RestMethodAsync "https://$($Flexpool_Host)/api/v1/miner/$($PoolConfig.ETH)/balance" -cycletime ($Config.BalanceUpdateMinutes*60))){$Success = $false}
-    if (-not ($TotalRequest = Invoke-RestMethodAsync "https://$($Flexpool_Host)/api/v1/miner/$($PoolConfig.ETH)/totalPaid" -cycletime ($Config.BalanceUpdateMinutes*60))){$Success = $false}
+    $Pool_BalanceRequest = Invoke-RestMethodAsync "https://flexpool.io/api/v1/miner/$($PoolConfig.$Pool_Currency)/balance" -cycletime ($Config.BalanceUpdateMinutes*60) -fixbigint
+    $Pool_TotalRequest   = Invoke-RestMethodAsync "https://flexpool.io/api/v1/miner/$($PoolConfig.$Pool_Currency)/totalPaid" -cycletime ($Config.BalanceUpdateMinutes*60) -fixbigint
+    $ok = -not $Pool_BalanceRequest.error -and -not $Pool_TotalRequest.error
 }
 catch {
     if ($Error.Count){$Error.RemoveAt(0)}
-    $Success=$false
 }
 
-if (-not $Success) {
+if (-not $ok) {
     Write-Log -Level Warn "Pool Balance API ($Name) has failed. "
     return
 }
 
-if (($BalanceRequest | Get-Member -MemberType NoteProperty -ErrorAction Ignore | Measure-Object Name).Count -le 1) {
-    Write-Log -Level Info "Pool Balance API ($Name) returned nothing. "
-    return
-}
+$Pool_PaymentsData = @()
 
-$Payments_TotalPages = 0
-$Payments_Page = 0
-
-    while($Payments_Page -lt $Payments_TotalPages -or $Payments_Page -eq 0){
-        try {
-        $PaymentsResult = Invoke-RestMethodAsync "https://$($Flexpool_Host)/api/v1/miner/$($PoolConfig.ETH)/payments?page=$Payments_Page" -retry 3 -retrywait 500 -tag $Name -cycletime 120
+$page = 0
+do {
+    $ok = $false
+    try {
+        $Pool_PaymentsResult = Invoke-RestMethodAsync "https://flexpool.io/api/v1/miner/$($PoolConfig.$Pool_Currency)/payments?page=$($page)" -cycletime ($Config.BalanceUpdateMinutes*60) -fixbigint
+        $ok = -not $Pool_PaymentsResult.error -and (++$page -lt $Pool_PaymentsResult.result.total_pages)
+        if (-not $Pool_PaymentsResult.error) {
+            $Pool_PaymentsResult.result.data | Foreach-Object {$Pool_PaymentsData += $_}
         }
-        catch {
-            if ($Error.Count){$Error.RemoveAt(0)}
-            Write-Log -Level Warn "Pool Blocks API ($Name) has failed. "
-            return
-        }
-        if($Payments_Page -eq 0){
-            $Payments_data = $PaymentsResult.result
-            $Payments_TotalPages = $PaymentsResult.result.total_pages
-        }else{
-            $Payments_data.data += $PaymentsResult.result.data
-        }
-        $Payments_Page++;
     }
+    catch {
+        if ($Error.Count){$Error.RemoveAt(0)}
+    }
+} until (-not $ok)
 
+$Pool_Divisor = 1e18
+
+$Unpaid = [Decimal]$Pool_BalanceRequest.result / $Pool_Divisor
+$Paid   = [Decimal]$Pool_TotalRequest.result / $Pool_Divisor
 
 [PSCustomObject]@{
-        Caption     = "$($Name) (ETH)"
+        Caption     = "$($Name) ($Pool_Currency)"
 		BaseName    = $Name
-        Currency    = "ETH"
-        Balance     = [Decimal]$BalanceRequest.result / $Pool_Divisor
+        Currency    = $Pool_Currency
+        Balance     = $Unpaid
         Pending     = ""
-        Total       = [Decimal]$BalanceRequest.result / $Pool_Divisor
-        Paid        = [Decimal]$TotalRequest.result / $Pool_Divisor
-        #Paid24h     = [Decimal]$Request.paid24h
-        Earned      = ([Decimal]$BalaceRequest.result + [Decimal]$TotalRequest.result) / $Pool_Divisor
-        Payouts     = @(Get-BalancesPayouts $Payments_data.data -Divisor $Pool_Divisor | Select-Object)
+        Total       = $Unpaid
+        Paid        = $Paid
+        Earned      = $Unpaid + $Paid
+        Payouts     = @(Get-BalancesPayouts $Pool_PaymentsData -Divisor $Pool_Divisor | Select-Object)
         LastUpdated = (Get-Date).ToUniversalTime()
 }
+
+$Pool_PaymentsData = $null

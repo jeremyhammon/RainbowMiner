@@ -1910,7 +1910,7 @@ function Start-SubProcessInBackground {
 
     if ($ArgumentList) {
         $ArgumentListToBlock = $ArgumentList
-        ([regex]"\s-+[\w\-_]+[\s=]+(\w[=\w]*,[,=\w]+)").Matches(" $ArgumentListToBlock") | Foreach-Object {$ArgumentListToBlock=$ArgumentListToBlock -replace [regex]::Escape($_.Groups[1].Value),"'$($_.Groups[1].Value)'"}
+        ([regex]"\s-+[\w\-_]+[\s=]+([^'`"][^\s]*,[^\s]+)").Matches(" $ArgumentListToBlock") | Foreach-Object {$ArgumentListToBlock=$ArgumentListToBlock -replace [regex]::Escape($_.Groups[1].Value),"'$($_.Groups[1].Value -replace "'","``'")'"}
         if ($ArgumentList -ne $ArgumentListToBlock) {
             Write-Log -Level Info "Start-SubProcessInBackground argumentlist: $($ArgumentListToBlock)"
             $ArgumentList = $ArgumentListToBlock
@@ -2595,6 +2595,7 @@ function Invoke-Exe {
             $out = $process.StandardOutput.ReadToEnd()
             $process.WaitForExit($WaitForExit*1000)>$null
             if ($ExpandLines) {foreach ($line in @($out -split '\n')){if (-not $ExcludeEmptyLines -or $line.Trim() -ne ''){$line -replace '\r'}}} else {$out}
+            $Global:LASTEXEEXITCODE = $process.ExitCode
         } else {
             if ($FilePath -match "IncludesLinux") {$FilePath = Get-Item $FilePath | Select-Object -ExpandProperty FullName}
             if (Test-OCDaemon) {
@@ -2636,12 +2637,12 @@ function Invoke-TcpRequest {
     )
     $Response = $null
     if ($Server -eq "localhost") {$Server = "127.0.0.1"}
-    #try {$ipaddress = [ipaddress]$Server} catch {$ipaddress = [system.Net.Dns]::GetHostByName($Server).AddressList | select-object -index 0}
     try {
-        $Client = New-Object System.Net.Sockets.TcpClient $Server, $Port
+        $Client = [System.Net.Sockets.TcpClient]::new($Server, $Port)
+        #$Client.LingerState = [System.Net.Sockets.LingerOption]::new($true, 0)
         $Stream = $Client.GetStream()
-        $Writer = New-Object System.IO.StreamWriter $Stream
-        if (-not $WriteOnly) {$Reader = New-Object System.IO.StreamReader $Stream}
+        $Writer = [System.IO.StreamWriter]::new($Stream)
+        if (-not $WriteOnly) {$Reader = [System.IO.StreamReader]::new($Stream)}
         $client.SendTimeout = $Timeout * 1000
         $client.ReceiveTimeout = $Timeout * 1000
         $Writer.AutoFlush = $true
@@ -2654,10 +2655,10 @@ function Invoke-TcpRequest {
         Write-Log -Level "$(if ($Quiet) {"Info"} else {"Warn"})" "Could not request from $($Server):$($Port)"
     }
     finally {
-        if ($Reader) {$Reader.Close();$Reader.Dispose()}
-        if ($Writer) {$Writer.Close();$Writer.Dispose()}
-        if ($Stream) {$Stream.Close();$Stream.Dispose()}
         if ($Client) {$Client.Close();$Client.Dispose()}
+        if ($Reader) {$Reader.Dispose()}
+        if ($Writer) {$Writer.Dispose()}
+        if ($Stream) {$Stream.Dispose()}
     }
 
     $Response
@@ -2679,9 +2680,9 @@ function Invoke-TcpRead {
     if ($Server -eq "localhost") {$Server = "127.0.0.1"}
     #try {$ipaddress = [ipaddress]$Server} catch {$ipaddress = [system.Net.Dns]::GetHostByName($Server).AddressList | select-object -index 0}
     try {
-        $Client = New-Object System.Net.Sockets.TcpClient $Server, $Port
+        $Client = [System.Net.Sockets.TcpClient]::new($Server, $Port)
         $Stream = $Client.GetStream()
-        $Reader = New-Object System.IO.StreamReader $Stream
+        $Reader = [System.IO.StreamReader]::new($Stream)
         $client.SendTimeout = $Timeout * 1000
         $client.ReceiveTimeout = $Timeout * 1000
         $Response = $Reader.ReadToEnd()
@@ -2691,9 +2692,9 @@ function Invoke-TcpRead {
         Write-Log -Level "$(if ($Quiet) {"Info"} else {"Warn"})" "Could not read from $($Server):$($Port)"
     }
     finally {
-        if ($Reader) {$Reader.Close();$Reader.Dispose()}
-        if ($Stream) {$Stream.Close();$Stream.Dispose()}
         if ($Client) {$Client.Close();$Client.Dispose()}
+        if ($Reader) {$Reader.Dispose()}
+        if ($Stream) {$Stream.Dispose()}
     }
 
     $Response
@@ -2832,7 +2833,7 @@ function Get-Device {
                 if ($Error.Count){$Error.RemoveAt(0)}
                 Write-Log -Level Warn "WDDM device detection has failed. "
             }
-            $Global:WDDM_Devices = @($Global:WDDM_Devices | Sort-Object -Property BusId)
+            $Global:WDDM_Devices = @($Global:WDDM_Devices | Sort-Object {[int]"0x0$($_.BusId -replace "[^0-9A-F]+")"})
         }
 
         [System.Collections.Generic.List[string]]$AllPlatforms = @()
@@ -3110,7 +3111,7 @@ function Get-Device {
         #Roundup and add sort order by PCI busid
         $Index = 0
         $MineableIndex = 0
-        $Global:GlobalCachedDevices | Sort-Object BusId,Index | Foreach-Object {
+        $Global:GlobalCachedDevices | Sort-Object {[int]"0x0$($_.BusId -replace "[^0-9A-F]+")"},Index | Foreach-Object {
             $_.BusId_Index = $Index++
             $_.BusId_Mineable_Index = $MineableIndex
             if ($_.Vendor -in @("AMD","NVIDIA")) {$MineableIndex++}
@@ -5225,9 +5226,9 @@ function Set-PoolsConfigDefault {
             if ($Preset -is [string] -or -not $Preset.PSObject.Properties.Name) {$Preset = $null}
             $ChangeTag = Get-ContentDataMD5hash($Preset)
             $Done = [PSCustomObject]@{}
-            $Default = [PSCustomObject]@{Worker = "`$WorkerName";Penalty = "0";Algorithm = "";ExcludeAlgorithm = "";CoinName = "";ExcludeCoin = "";CoinSymbol = "";ExcludeCoinSymbol = "";MinerName = "";ExcludeMinerName = "";FocusWallet = "";AllowZero = "0";EnableAutoCoin = "0";EnablePostBlockMining = "0";CoinSymbolPBM = "";DataWindow = "";StatAverage = "";MaxMarginOfError = "100";SwitchingHysteresis="";MaxAllowedLuck="";MaxTimeSinceLastBlock="";Region=""}
+            $Default = [PSCustomObject]@{Worker = "`$WorkerName";Penalty = "0";Algorithm = "";ExcludeAlgorithm = "";CoinName = "";ExcludeCoin = "";CoinSymbol = "";ExcludeCoinSymbol = "";MinerName = "";ExcludeMinerName = "";FocusWallet = "";AllowZero = "0";EnableAutoCoin = "0";EnablePostBlockMining = "0";CoinSymbolPBM = "";DataWindow = "";StatAverage = "";StatAverageStable = "";MaxMarginOfError = "100";SwitchingHysteresis="";MaxAllowedLuck="";MaxTimeSinceLastBlock="";Region=""}
             $Setup = Get-ChildItemContent ".\Data\PoolsConfigDefault.ps1"
-            $Pools = @(Get-ChildItem ".\Pools\*.ps1" -File | Select-Object -ExpandProperty BaseName | Where-Object {$_ -notin @("Userpools","WhatToMine")})
+            $Pools = @(Get-ChildItem ".\Pools\*.ps1" -File | Select-Object -ExpandProperty BaseName | Where-Object {$_ -notin @("Userpools")})
             $Userpools = @()
             if ($UserpoolsPathToFile) {
                 $UserpoolsConfig = Get-ConfigContent $UserpoolsConfigName
@@ -5243,19 +5244,21 @@ function Set-PoolsConfigDefault {
                         $Setup_Content = $Preset.$Pool_Name
                     } else {
                         $Setup_Content = [PSCustomObject]@{}
-                        if ($Pool_Name -in $Userpools) {
-                            $Setup_Currencies = @($UserpoolsConfig | Where-Object {$_.Name -eq $Pool_Name} | Select-Object -ExpandProperty Currency -Unique)
-                            if (-not $Setup_Currencies) {$Setup_Currencies = @("BTC")}
-                        } else {
-                            $Setup_Currencies = @("BTC")
-                            if ($Setup.$Pool_Name) {
-                                if ($Setup.$Pool_Name.Fields) {$Setup_Content = $Setup.$Pool_Name.Fields}
-                                $Setup_Currencies = @($Setup.$Pool_Name.Currencies)            
+                        if ($Pool_Name -ne "WhatToMine") {
+                            if ($Pool_Name -in $Userpools) {
+                                $Setup_Currencies = @($UserpoolsConfig | Where-Object {$_.Name -eq $Pool_Name} | Select-Object -ExpandProperty Currency -Unique)
+                                if (-not $Setup_Currencies) {$Setup_Currencies = @("BTC")}
+                            } else {
+                                $Setup_Currencies = @("BTC")
+                                if ($Setup.$Pool_Name) {
+                                    if ($Setup.$Pool_Name.Fields) {$Setup_Content = $Setup.$Pool_Name.Fields}
+                                    $Setup_Currencies = @($Setup.$Pool_Name.Currencies)            
+                                }
                             }
-                        }
-                        $Setup_Currencies | Foreach-Object {
-                            $Setup_Content | Add-Member $_ "$(if ($_ -eq "BTC"){"`$Wallet"})" -Force
-                            $Setup_Content | Add-Member "$($_)-Params" "" -Force
+                            $Setup_Currencies | Foreach-Object {
+                                $Setup_Content | Add-Member $_ "$(if ($_ -eq "BTC"){"`$Wallet"})" -Force
+                                $Setup_Content | Add-Member "$($_)-Params" "" -Force
+                            }
                         }
                     }
                     if ($Setup.$Pool_Name.Fields -ne $null) {
@@ -5934,6 +5937,209 @@ Param(
     $md5 = new-object -TypeName System.Security.Cryptography.MD5CryptoServiceProvider
     $utf8 = new-object -TypeName System.Text.UTF8Encoding
     [System.BitConverter]::ToString($md5.ComputeHash($utf8.GetBytes($value))).ToUpper() -replace '-'
+}
+
+function Invoke-GetUrlCurl {
+[cmdletbinding()]
+Param(   
+    [Parameter(Mandatory = $False)]   
+        [string]$url = "",
+    [Parameter(Mandatory = $False)]   
+        [string]$method = "REST",
+    [Parameter(Mandatory = $False)]   
+        [string]$requestmethod = "",
+    [Parameter(Mandatory = $False)]
+        [int]$timeout = 15,
+    [Parameter(Mandatory = $False)]
+        $body,
+    [Parameter(Mandatory = $False)]
+        [hashtable]$headers,
+    [Parameter(Mandatory = $False)]
+        [string]$user = "",
+    [Parameter(Mandatory = $False)]
+        [string]$password = "",
+    [Parameter(Mandatory = $False)]
+        [string]$useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.181 Safari/537.36",
+    [Parameter(Mandatory = $False)]
+        [bool]$fixbigint = $false,
+    [Parameter(Mandatory = $False)]
+        $JobData,
+    [Parameter(Mandatory = $False)]
+        [string]$JobKey = "",
+    [Parameter(Mandatory = $False)]
+        [switch]$ForceLocal,
+    [Parameter(Mandatory = $False)]
+        [switch]$AsJob
+)
+    if ($JobKey -and $JobData) {
+        if (-not $ForceLocal -and $JobData.url -notmatch "^server://") {
+            $Config = if ($Session.IsDonationRun) {$Session.UserConfig} else {$Session.Config}
+            if ($Config.RunMode -eq "Client" -and $Config.ServerName -and $Config.ServerPort -and (Test-TcpServer $Config.ServerName -Port $Config.ServerPort -Timeout 2)) {
+                $serverbody = @{
+                    url       = $JobData.url
+                    method    = $JobData.method
+                    timeout   = $JobData.timeout
+                    body      = $JobData.body | ConvertTo-Json -Depth 10 -Compress
+                    headers   = $JobData.headers | ConvertTo-Json -Depth 10 -Compress
+                    cycletime = $JobData.cycletime
+                    retry     = $JobData.retry
+                    retrywait = $JobData.retrywait
+                    delay     = $JobData.delay
+                    tag       = $JobData.tag
+                    user      = $JobData.user
+                    password  = $JobData.password
+                    fixbigint = $JobData.fixbigint
+                    jobkey    = $JobKey
+                    machinename = $Session.MachineName
+                    myip      = $Session.MyIP
+                }
+                #Write-ToFile -FilePath "Logs\geturl_$(Get-Date -Format "yyyy-MM-dd").txt" -Message "http://$($Config.ServerName):$($Config.ServerPort)/getjob $(ConvertTo-Json $serverbody)" -Append -Timestamp
+                $Result = Invoke-GetUrl "http://$($Config.ServerName):$($Config.ServerPort)/getjob" -body $serverbody -user $Config.ServerUser -password $Config.ServerPassword -ForceLocal
+                #Write-ToFile -FilePath "Logs\geturl_$(Get-Date -Format "yyyy-MM-dd").txt" -Message ".. $(if ($Result.Status) {"ok!"} else {"failed"})" -Append -Timestamp
+                if ($Result.Status) {return $Result.Content}
+            }
+        }
+
+        $url      = $JobData.url
+        $method   = $JobData.method
+        $timeout  = $JobData.timeout
+        $body     = $JobData.body
+        $headers  = $JobData.headers
+        $user     = $JobData.user
+        $password = $JobData.password
+        $fixbigint= $JobData.fixbigint
+    }
+
+    if ($url -match "^server://(.+)$") {
+        $Config = if ($Session.IsDonationRun) {$Session.UserConfig} else {$Session.Config}
+        if ($Config.RunMode -eq "Client" -and $Config.ServerName -and $Config.ServerPort -and (Test-TcpServer $Config.ServerName -Port $Config.ServerPort -Timeout 2)) {
+            $url           = "http://$($Config.ServerName):$($Config.ServerPort)/$($Matches[1])"
+            $user          = $Config.ServerUser
+            $password      = $Config.ServerPassword
+        } else {
+            return
+        }
+    }
+
+    if (-not $requestmethod) {$requestmethod = if ($body) {"POST"} else {"GET"}}
+    $RequestUrl = $url -replace "{timestamp}",(Get-Date -Format "yyyy-MM-dd_HH-mm-ss") -replace "{unixtimestamp}",(Get-UnixTimestamp)
+
+    $headers_local = @{}
+    if ($headers) {$headers.Keys | Foreach-Object {$headers_local[$_] = $headers[$_]}}
+    if ($method -eq "REST" -and -not $headers_local.ContainsKey("Accept")) {$headers_local["Accept"] = "application/json"}
+    if (-not $headers_local.ContainsKey("Cache-Control")) {$headers_local["Cache-Control"] = "no-cache"}
+    if ($user) {$headers_local["Authorization"] = "Basic $([System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("$($user):$($password)")))"}
+
+    $ErrorMessage = ''
+
+    if ($IsWindows) {
+        $StatusCode = $null
+
+        try {
+            $CurlHeaders = [String]::Join(" ",@($headers_local.GetEnumerator() | Sort-Object Name | Foreach-Object {"--header `"$($_.Name): $($_.Value)`""}))
+            $CurlBody    = ""
+            if ($body) {
+                if ($body -is [hashtable]) {
+                    $body = [String]::Join("&",@($body.GetEnumerator() | Sort-Object Name | Foreach-Object {"$($_.Name)=$(Get-UrlEncode $_.Value)"}))
+                }
+                $CurlBody = " -d `"$($body -replace '"','\"')`""
+            }
+            $Data = Invoke-Exe ".\Includes\curl\$(if ([Environment]::Is64BitOperatingSystem) {"x64"} else {"x32"})\curl.exe" -ArgumentList "-X $($requestmethod)$($CurlBody) `"$($url)`" $($CurlHeaders) --user-agent `"$($useragent)`" --max-time $($timeout) --connect-timeout $($timeout) --ssl-allow-beast --ssl-no-revoke --max-redirs 5 -s -L -q" -WaitForExit $Timeout
+            if ($Global:LASTEXEEXITCODE -eq 0) {
+                if ($method -eq "REST") {
+                    if ($fixbigint) {
+                        try {
+                            $Data = ([regex]"(?si):\s*(\d{19,})[`r`n,\s\]\}]").Replace($Data,{param($m) $m.Groups[0].Value -replace $m.Groups[1].Value,"$([double]$m.Groups[1].Value)"})
+                        } catch {if ($Error.Count){$Error.RemoveAt(0)}}
+                    }
+                    try {$Data = ConvertFrom-Json $Data -ErrorAction Stop} catch {if ($Error.Count){$Error.RemoveAt(0)}}
+                }
+                if ($Data -and $Data.unlocked -ne $null) {$Data.PSObject.Properties.Remove("unlocked")}
+            } else {
+                $ErrorMessage = "$($url): Curl-Error $($Global:LASTEXEEXITCODE)"
+            }
+        } catch {
+            if ($Error.Count){$Error.RemoveAt(0)}
+            $ErrorMessage = "$($_.Exception.Message)"
+        }
+
+    } else {
+
+        if ($Session.IsCore -or ($Session.IsCore -eq $null -and $PSVersionTable.PSVersion -ge (Get-Version "6.1"))) {
+            $StatusCode = $null
+            $Data       = $null
+
+            $oldProgressPreference = $null
+            if ($Global:ProgressPreference -ne "SilentlyContinue") {
+                $oldProgressPreference = $Global:ProgressPreference
+                $Global:ProgressPreference = "SilentlyContinue"
+            }
+
+            try {
+                if ($Session.IsPS7 -or ($Session.IsPS7 -eq $null -and $PSVersionTable.PSVersion -ge (Get-Version "7.0"))) {
+                    $Response = Invoke-WebRequest $RequestUrl -SkipHttpErrorCheck -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
+                } else {
+                    $Response = Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
+                }
+
+                $StatusCode = $Response.StatusCode
+
+                if ($StatusCode -match "^2\d\d$") {
+                    $Data = $Response.Content
+                    if ($method -eq "REST") {
+                        if ($fixbigint) {
+                            try {
+                                $Data = ([regex]"(?si):\s*(\d{19,})[`r`n,\s\]\}]").Replace($Data,{param($m) $m.Groups[0].Value -replace $m.Groups[1].Value,"$([double]$m.Groups[1].Value)"})
+                            } catch {if ($Error.Count){$Error.RemoveAt(0)}}
+                        }
+                        try {$Data = ConvertFrom-Json $Data -ErrorAction Stop} catch {if ($Error.Count){$Error.RemoveAt(0)}}
+                    }
+                    if ($Data -and $Data.unlocked -ne $null) {$Data.PSObject.Properties.Remove("unlocked")}
+                }
+
+                if ($Response) {
+                    $Response = $null
+                }
+            } catch {
+                if ($Error.Count){$Error.RemoveAt(0)}
+                $ErrorMessage = "$($_.Exception.Message)"
+            }
+
+            if ($oldProgressPreference) {$Global:ProgressPreference = $oldProgressPreference}
+            if ($ErrorMessage -eq '' -and $StatusCode -ne 200) {
+                if ($StatusCodeObject = Get-HttpStatusCode $StatusCode) {
+                    if ($StatusCodeObject.Type -ne "Success") {
+                        $ErrorMessage = "$StatusCode $($StatusCodeObject.Description) ($($StatusCodeObject.Type))"
+                    }
+                } else {
+                    $ErrorMessage = "$StatusCode Very bad! Code not found :("
+                }
+            }
+        } else {
+            try {
+                $ServicePoint = $null
+                if ($method -eq "REST") {
+                    $ServicePoint = [System.Net.ServicePointManager]::FindServicePoint($RequestUrl)
+                    $Data = Invoke-RestMethod $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
+                } else {
+                    $oldProgressPreference = $Global:ProgressPreference
+                    $Global:ProgressPreference = "SilentlyContinue"
+                    $Data = (Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body).Content
+                    $Global:ProgressPreference = $oldProgressPreference
+                }
+                if ($Data -and $Data.unlocked -ne $null) {$Data.PSObject.Properties.Remove("unlocked")}
+            } catch {
+                if ($Error.Count){$Error.RemoveAt(0)}
+                $ErrorMessage = "$($_.Exception.Message)"
+            } finally {
+                if ($ServicePoint) {$ServicePoint.CloseConnectionGroup("") > $null}
+                $ServicePoint = $null
+            }
+        }
+    }
+
+    if ($ErrorMessage -eq '') {$Data}
+    if ($ErrorMessage -ne '') {throw $ErrorMessage}
 }
 
 function Invoke-GetUrl {
