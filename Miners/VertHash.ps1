@@ -10,13 +10,13 @@ if (-not $IsWindows -and -not $IsLinux) {return}
 $Port = "364{0:d2}"
 $ManualURI = "https://github.com/CryptoGraphics/VerthashMiner/releases"
 $DevFee = 0.0
-$Version = "0.7.0"
+$Version = "0.7.1"
 
 if ($IsLinux) {
     $Path = ".\Bin\GPU-Verthash\VerthashMiner"
     $UriCuda = @(
         [PSCustomObject]@{
-            Uri = "https://github.com/RainbowMiner/miner-binaries/releases/download/v0.7.0-verthash/VerthashMiner-0.7.0-CUDA11-linux.tar.gz"
+            Uri = "https://github.com/RainbowMiner/miner-binaries/releases/download/v0.7.1-verthash/VerthashMiner-0.7.1-CUDA11-linux.tar.gz"
             DatFile = "$env:HOME/.vertcoin/verthash.dat"
             Cuda = "11.0"
         }
@@ -25,7 +25,7 @@ if ($IsLinux) {
     $Path = ".\Bin\GPU-Verthash\VerthashMiner.exe"
     $UriCuda = @(
         [PSCustomObject]@{
-            Uri = "https://github.com/RainbowMiner/miner-binaries/releases/download/v0.7.0-verthash/VerthashMiner-0.7.0-CUDA11-windows.zip"
+            Uri = "https://github.com/RainbowMiner/miner-binaries/releases/download/v0.7.1-verthash/VerthashMiner-0.7.1-CUDA11-windows.zip"
             DatFile = "$env:APPDATA\Vertcoin\verthash.dat"
             Cuda = "11.0"
         }
@@ -84,8 +84,8 @@ foreach ($Miner_Vendor in @("AMD","NVIDIA")) {
 
 		switch($_.Vendor) {
 			"NVIDIA" {$Miner_Deviceparams = "--cu-devices"; $Miner_DeviceIndex = "Type_Vendor_Index"}
-			"AMD" {$Miner_Deviceparams = "--cl-devices"; $Miner_DeviceIndex = "BusId_Index"}
-			Default {$Miner_Deviceparams = "";$Miner_DeviceIndex = "BusId_Index"}
+			"AMD" {$Miner_Deviceparams = "--cl-devices"; $Miner_DeviceIndex = "Type_Index"}
+			Default {$Miner_Deviceparams = "";$Miner_DeviceIndex = "Type_Index"}
 		}
 
         $Commands.ForEach({
@@ -128,8 +128,9 @@ foreach ($Miner_Vendor in @("AMD","NVIDIA")) {
                         BaseName         = $Name
                         BaseAlgorithm    = $Algorithm_Norm_0
                         PrerequisitePath = $DatFile
-                        PrerequisiteURI  = "https://vtc.suprnova.cc/verthash.dat"
-                        PrerequisiteMsg  = "$($Name): Downloading verthash.dat (1.2GB) in the background, please wait!"
+                        PrerequisiteURI  = "https://github.com/RainbowMiner/miner-binaries/releases/download/v1.0-verthash/verthash.dat"
+                        PrerequisiteMsg  = "Downloading verthash.dat (1.2GB) in the background, please wait!"
+                        ListDevices      = "-l"
 				    }
 			    }
 		    }

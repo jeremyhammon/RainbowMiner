@@ -62,11 +62,7 @@ $Session.Config.Userpools | Where-Object {$_.Name -eq $Name -and $_.Enable -and 
         SSL           = $_.SSL
         WTM           = $true
         Updated       = (Get-Date).ToUniversalTime()
-        Workers       = $null
         PoolFee       = $_.PoolFee
-        Hashrate      = $null
-        TSL           = $null
-        BLK           = $null
         EthMode       = "$(if ($_.EthMode) {$_.EthMode} else {$Pool_EthProxy})"
         Name          = $Name
         Penalty       = 0
@@ -75,8 +71,8 @@ $Session.Config.Userpools | Where-Object {$_.Name -eq $Name -and $_.Enable -and 
         HasMinerExclusions = $false
         Price_Bias    = 0.0
         Price_Unbias  = 0.0
-        Wallet        = $Pool_Wallet
-        Worker        = "{workername:$Worker}"
+        Wallet        = $Pool_Params["Wallet"]
+        Worker        = $Pool_Params["WorkerName"]
         Email         = $Email
     }
 }

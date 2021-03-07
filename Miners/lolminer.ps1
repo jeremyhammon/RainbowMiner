@@ -90,7 +90,7 @@ foreach ($Miner_Vendor in @("AMD","NVIDIA")) {
                     if ($First) {
 			            $Miner_Port = $Port -f ($Miner_Device | Select-Object -First 1 -ExpandProperty Index)
 			            $Miner_Name = (@($Name) + @($Miner_Device.Name | Sort-Object) | Select-Object) -join '-'
-                        $DeviceIDsAll = $Miner_Device.Type_Mineable_Index -join ',' #"$($Miner_Device.BusId -join ',') --devicesbypcie"
+                        $DeviceIDsAll = $Miner_Device.BusId_Type_Mineable_Index -join ',' #"$($Miner_Device.BusId -join ',') --devicesbypcie"
                         $First = $false
                     }
                     $PersCoin = if ($_.Pers) {Get-EquihashCoinPers $Pools.$Algorithm_Norm.CoinSymbol -Default "auto"}
@@ -123,6 +123,7 @@ foreach ($Miner_Vendor in @("AMD","NVIDIA")) {
                             PowerDraw      = 0
                             BaseName       = $Name
                             BaseAlgorithm  = $Algorithm_Norm_0
+                            ListDevices    = "--list-devices"
 					    }
                     }
 				}

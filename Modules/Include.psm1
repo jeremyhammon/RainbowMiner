@@ -2277,7 +2277,7 @@ function Stop-SubProcess {
                     $oldProgressPreference = $Global:ProgressPreference
                     $Global:ProgressPreference = "SilentlyContinue"
                     try {
-                        $Response = Invoke-WebRequest $ShutdownUrl -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+                        $Response = Invoke-GetUrl $ShutdownUrl -Timeout 20 -ErrorAction Stop
                         #$Data = $Response | ConvertFrom-Json -ErrorAction Stop
 
                         $StopWatch.Reset()
@@ -2544,7 +2544,25 @@ function Expand-WebRequest {
             Remove-Item $Path_Old -Recurse -Force
         }
         if (Test-Path $Path_Bak) {
-            $ProtectedFiles | Foreach-Object {Get-ChildItem (Join-Path $Path_Bak $_) -ErrorAction Ignore -File | Where-Object {[IO.Path]::GetExtension($_) -notmatch "(dll|exe|bin)$"} | Foreach-Object {Copy-Item $_ $Path_New -Force}}
+            $ProtectedFiles | Foreach-Object {
+                $CheckForFile_Path = Split-Path $_
+                $CheckForFile_Name = Split-Path $_ -Leaf
+                Get-ChildItem (Join-Path $Path_Bak $_) -ErrorAction Ignore -File | Where-Object {[IO.Path]::GetExtension($_) -notmatch "(dll|exe|bin)$"} | Foreach-Object {
+                    if ($CheckForFile_Path) {
+                        $CopyToPath = Join-Path $Path_New $CheckForFile_Path
+                        if (-not (Test-Path $CopyToPath)) {
+                            New-Item $CopyToPath -ItemType Directory -ErrorAction Ignore > $null
+                        }
+                    } else {
+                        $CopyToPath = $Path_New
+                    }
+                    if ($_.Length -lt 10MB) {
+                        Copy-Item $_ $CopyToPath -Force
+                    } else {
+                        Move-Item $_ $CopyToPath -Force
+                    }
+                }
+            }
             $SkipBackups = if ($EnableMinerBackups) {3} else {0}
             Get-ChildItem (Join-Path (Split-Path $Path) "$(Split-Path $Path -Leaf).*") -Directory | Sort-Object Name -Descending | Select-Object -Skip $SkipBackups | Foreach-Object {Remove-Item $_ -Recurse -Force}
         }
@@ -2620,12 +2638,14 @@ function Invoke-TcpRequest {
     param(
         [Parameter(Mandatory = $true)]
         [String]$Server = "localhost", 
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $false)]
         [String]$Port, 
         [Parameter(Mandatory = $false)]
         [String]$Request = "",
         [Parameter(Mandatory = $false)]
         [Int]$Timeout = 10, #seconds,
+        [Parameter(Mandatory = $false)]
+        [hashtable]$Headers = @{},
         [Parameter(Mandatory = $false)]
         [Switch]$DoNotSendNewline,
         [Parameter(Mandatory = $false)]
@@ -2638,21 +2658,53 @@ function Invoke-TcpRequest {
     $Response = $null
     if ($Server -eq "localhost") {$Server = "127.0.0.1"}
     try {
+        if ($Server -match "^http") {
+            $Uri = [System.Uri]::New($Server)
+            $Server = $Uri.Host
+            $Port   = $Uri.Port
+        }
         $Client = [System.Net.Sockets.TcpClient]::new($Server, $Port)
         #$Client.LingerState = [System.Net.Sockets.LingerOption]::new($true, 0)
         $Stream = $Client.GetStream()
         $Writer = [System.IO.StreamWriter]::new($Stream)
-        if (-not $WriteOnly) {$Reader = [System.IO.StreamReader]::new($Stream)}
+        if (-not $WriteOnly -or $Uri) {$Reader = [System.IO.StreamReader]::new($Stream)}
         $client.SendTimeout = $Timeout * 1000
         $client.ReceiveTimeout = $Timeout * 1000
         $Writer.AutoFlush = $true
 
-        if ($Request) {if ($DoNotSendNewline) {$Writer.Write($Request)} else {$Writer.WriteLine($Request)}}
-        if (-not $WriteOnly) {$Response = if ($ReadToEnd) {$Reader.ReadToEnd()} else {$Reader.ReadLine()}}
+        if ($Uri) {
+            $Writer.NewLine = "`r`n"
+            $Writer.WriteLine("GET $($Uri.PathAndQuery) HTTP/1.1")
+            $Writer.WriteLine("Host: $($Server):$($Port)")
+            $Writer.WriteLine("Cache-Control: no-cache")
+            if ($headers -and $headers.Keys) {
+                $headers.Keys | Foreach-Object {$Writer.WriteLine("$($_): $($headers[$_])")}
+            }
+            $Writer.WriteLine("Connection: close")
+            $Writer.WriteLine("")
+
+            $cnt = 0
+            $closed = $false
+            while ($cnt -lt 20 -and -not $Reader.EndOfStream -and ($line = $Reader.ReadLine())) {
+                $line = $line.Trim()
+                if ($line -match "HTTP/[0-9\.]+\s+(\d{3}.*)") {$HttpCheck = $Matches[1]}
+                elseif ($line -match "Connection:\s+close") {$closed = $true}
+                $cnt++
+            }
+
+            if ($line -eq $null) {throw "empty response"}
+            if (-not $HttpCheck) {throw "invalid response"}
+            if ($HttpCheck -notmatch "^2") {throw $HttpCheck}
+
+            $Response = $Reader.ReadToEnd()
+        } else {
+            if ($Request) {if ($DoNotSendNewline) {$Writer.Write($Request)} else {$Writer.WriteLine($Request)}}
+            if (-not $WriteOnly) {$Response = if ($ReadToEnd) {$Reader.ReadToEnd()} else {$Reader.ReadLine()}}
+        }
     }
     catch {
         if ($Error.Count){$Error.RemoveAt(0)}
-        Write-Log -Level "$(if ($Quiet) {"Info"} else {"Warn"})" "Could not request from $($Server):$($Port)"
+        Write-Log -Level "$(if ($Quiet) {"Info"} else {"Warn"})" "TCP request to $($Server):$($Port) failed: $($_.Exception.Message)"
     }
     finally {
         if ($Client) {$Client.Close();$Client.Dispose()}
@@ -2987,6 +3039,12 @@ function Get-Device {
                         Type = [String]$Device_OpenCL.Type
                         Type_Index = [Int]$Type_Index."$($Device_OpenCL.Type)"
                         Type_Mineable_Index = [Int]$Type_Mineable_Index."$($Device_OpenCL.Type)"
+                        BusId_Index               = 0
+                        BusId_Type_Index          = 0
+                        BusId_Type_Vendor_Index   = 0
+                        BusId_Type_Mineable_Index = 0
+                        BusId_Vendor_Index        = 0
+
                         OpenCL = $Device_OpenCL
                         Model = $Model
                         Model_Base = $Model
@@ -2994,9 +3052,8 @@ function Get-Device {
                         InstanceId = [String]$InstanceId
                         CardId = $CardId
                         BusId = $null
-                        BusId_Index = 0
-                        BusId_Mineable_Index = 0
                         GpuGroup = ""
+
                         Data = [PSCustomObject]@{
                                         AdapterId         = 0  #amd
                                         Utilization       = 0  #amd/nvidia
@@ -3109,12 +3166,27 @@ function Get-Device {
         }
 
         #Roundup and add sort order by PCI busid
-        $Index = 0
-        $MineableIndex = 0
+        $BusId_Index = 0
+        $BusId_Type_Index = @{}
+        $BusId_Type_Vendor_Index = @{}
+        $BusId_Type_Mineable_Index = @{}
+        $BusId_Vendor_Index = @{}
+
         $Global:GlobalCachedDevices | Sort-Object {[int]"0x0$($_.BusId -replace "[^0-9A-F]+")"},Index | Foreach-Object {
-            $_.BusId_Index = $Index++
-            $_.BusId_Mineable_Index = $MineableIndex
-            if ($_.Vendor -in @("AMD","NVIDIA")) {$MineableIndex++}
+            $_.BusId_Index               = $BusId_Index++
+            $_.BusId_Type_Index          = [int]$BusId_Type_Index."$($_.Type)"
+            $_.BusId_Type_Vendor_Index   = [int]$BusId_Type_Vendor_Index."$($_.Type)"."$($_.Vendor)"
+            $_.BusId_Type_Mineable_Index = [int]$BusId_Type_Mineable_Index."$($_.Type)"
+            $_.BusId_Vendor_Index        = [int]$BusId_Vendor_Index."$($_.Vendor)"
+
+            if (-not $BusId_Type_Vendor_Index."$($_.Type)") { 
+                $BusId_Type_Vendor_Index."$($_.Type)" = @{}
+            }
+
+            $BusId_Type_Index."$($_.Type)"++
+            $BusId_Type_Vendor_Index."$($_.Type)"."$($_.Vendor)"++
+            $BusId_Vendor_Index."$($_.Vendor)"++
+            if ($_.Vendor -in @("AMD","NVIDIA")) {$BusId_Type_Mineable_Index."$($_.Type)"++}
         }
 
         #CPU detection
@@ -3509,11 +3581,11 @@ function Get-DeviceName {
                 $SubId = if ($_.GpuId -match "&DEV_([0-9A-F]+?)&") {$Matches[1]} else {"noid"}
                 if ($Vendor_Cards -and $Vendor_Cards.$DeviceName.$SubId) {$DeviceName = $Vendor_Cards.$DeviceName.$SubId}
                 [PSCustomObject]@{
-                    Index = $DeviceId
+                    Index      = $DeviceId
                     DeviceName = $DeviceName
                     InstanceId = $_.GpuId
-                    SubId = $SubId
-                    PCIBusId = if ($_.GpuId -match "&BUS_(\d+)") {"$("{0:x2}" -f [int]$Matches[1]):00"}
+                    SubId      = $SubId
+                    PCIBusId   = if ($_.GpuId -match "&BUS_(\d+)&DEV_(\d+)") {"{0:x2}:{1:x2}" -f [int]$Matches[1],[int]$Matches[2]} else {$null}
                 }
                 $DeviceId++
             }
@@ -3652,94 +3724,37 @@ function Update-DeviceInformation {
         if ($DeviceConfig -and $DeviceConfig.$Model -ne $null -and $DeviceConfig.$Model.PowerAdjust -ne $null -and $DeviceConfig.$Model.PowerAdjust -ne "") {$PowerAdjust[$Model] = $DeviceConfig.$Model.PowerAdjust}
     }
 
+    if (-not (Test-Path "Variable:Global:GlobalGPUMethod")) {
+        $Global:GlobalGPUMethod = @{}
+    }
+
     $Global:GlobalCachedDevices | Where-Object {$_.Type -eq "GPU" -and $DeviceName -icontains $_.Name} | Group-Object Vendor | Foreach-Object {
         $Devices = $_.Group
         $Vendor = $_.Name
 
         try { #AMD
             if ($Vendor -eq 'AMD') {
-                if ($IsWindows -and $UseAfterburner -and $Script:abMonitor -and $Script:abControl) {
-                    if ($abReload) {
-                        if ($Script:abMonitor) {$Script:abMonitor.ReloadAll()}
-                        if ($Script:abControl) {$Script:abControl.ReloadAll()}
-                        $abReload = $false
-                    }
-                    $DeviceId = 0
-                    $Pattern = @{
-                        AMD    = '*Radeon*'
-                        NVIDIA = '*GeForce*'
-                        Intel  = '*Intel*'
-                    }
-                    @($Script:abMonitor.GpuEntries | Where-Object Device -like $Pattern.$Vendor) | ForEach-Object {
-                        $CardData = $Script:abMonitor.Entries | Where-Object GPU -eq $_.Index
-                        $PowerLimitPercent = [int]$($Script:abControl.GpuEntries[$_.Index].PowerLimitCur)
-                        $Utilization = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?usage$").Data
-                        $AdapterId = $_.Index
 
-                        if ($Script:AmdCardsTDP -eq $null) {$Script:AmdCardsTDP = Get-ContentByStreamReader ".\Data\amd-cards-tdp.json" | ConvertFrom-Json -ErrorAction Ignore}
+                if ($Script:AmdCardsTDP -eq $null) {$Script:AmdCardsTDP = Get-ContentByStreamReader ".\Data\amd-cards-tdp.json" | ConvertFrom-Json -ErrorAction Ignore}
 
-                        $Devices | Where-Object {$_.Vendor -eq $Vendor -and $_.Type_Vendor_Index -eq $DeviceId} | Foreach-Object {
-                            $_.Data.AdapterId         = [int]$AdapterId
-                            $_.Data.Utilization       = $Utilization
-                            $_.Data.UtilizationMem    = [int]$($mem = $CardData | Where-Object SrcName -match "^(GPU\d* )?memory usage$"; if ($mem.MaxLimit) {$mem.Data / $mem.MaxLimit * 100})
-                            $_.Data.Clock             = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?core clock$").Data
-                            $_.Data.ClockMem          = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?memory clock$").Data
-                            $_.Data.FanSpeed          = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?fan speed$").Data
-                            $_.Data.Temperature       = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?temperature$").Data
-                            $_.Data.PowerDraw         = $Script:AmdCardsTDP."$($_.Model_Name)" * ((100 + $PowerLimitPercent) / 100) * ($Utilization / 100) * ($PowerAdjust[$_.Model] / 100)
-                            $_.Data.PowerLimitPercent = $PowerLimitPercent
-                            #$_.Data.PCIBus            = [int]$($null = $_.GpuId -match "&BUS_(\d+)&"; $matches[1])
-                            $_.Data.Method            = "ab"
+                $Devices | Foreach-Object {$_.Data.Method = "";$_.Data.Clock = $_.Data.ClockMem = $_.Data.FanSpeed = $_.Data.Temperature = $_.Data.PowerDraw = 0}
 
-                            $_.DataMax.Clock       = [Math]::Max([int]$_.DataMax.Clock,$_.Data.Clock)
-                            $_.DataMax.ClockMem    = [Math]::Max([int]$_.DataMax.ClockMem,$_.Data.ClockMem)
-                            $_.DataMax.Temperature = [Math]::Max([int]$_.DataMax.Temperature,$_.Data.Temperature)
-                            $_.DataMax.FanSpeed    = [Math]::Max([int]$_.DataMax.FanSpeed,$_.Data.FanSpeed)
-                            $_.DataMax.PowerDraw   = [Math]::Max([decimal]$_.DataMax.PowerDraw,$_.Data.PowerDraw)
-                        }
-                        $DeviceId++
-                    }
-                } else {
+                if ($IsWindows) {
 
-                    if ($IsWindows) {
-                        Invoke-Exe ".\Includes\odvii.exe" -ArgumentList "s" -WorkingDirectory $Pwd | Tee-Object -Variable AdlResult | Out-Null
+                    $Success = 0
 
-                        if ($AdlResult -match "Gpu" -and $AdlResult -notmatch "Failed") {
-                            $AdlStats = $AdlResult | ConvertFrom-StringData
+                    #
+                    # 1. try odvii8
+                    #
 
-                            $Data = @{}
-                            $AdlStats.GetEnumerator() | Where-Object {$_.Name -match "Gpu (\d+)"} | Foreach-Object {
-                                $DeviceId = [int]$Matches[1]
-                                if (-not $Data.ContainsKey($DeviceId)) {$Data[$DeviceId] = [PSCustomObject]@{}}
-                                $Data[$DeviceId] | Add-Member ($_.Name -replace "Gpu\s+\d+\s*") ($_.Value) -Force
-                            }
+                    if ($Global:GlobalGPUMethod.odvii8 -ne "fail") {
+                        try {
 
-                            $Devices | Where-Object {$Data.ContainsKey($_.Type_Vendor_Index)} | Foreach-Object {
-                                $DeviceId = $_.Type_Vendor_Index
-                                $_.Data.AdapterId         = ''
-                                $_.Data.FanSpeed          = [int]($Data[$DeviceId].Fan)
-                                $_.Data.Clock             = [int]($Data[$DeviceId].PSObject.Properties | Where-Object {$_.Name -match "Core Clock"} | Foreach-Object {[int]$_.Value} | Measure-Object -Maximum).Maximum
-                                $_.Data.ClockMem          = [int]($Data[$DeviceId].PSObject.Properties | Where-Object {$_.Name -match "Mem Clock"} | Foreach-Object {[int]$_.Value} | Measure-Object -Maximum).Maximum
-                                $_.Data.Temperature       = [int]($Data[$DeviceId].Temp)
-                                $_.Data.PowerDraw         = [int]($Data[$DeviceId].Watts)
-                                $_.Data.Method            = "odvii"
-
-                                $_.DataMax.Clock       = [Math]::Max([int]$_.DataMax.Clock,$_.Data.Clock)
-                                $_.DataMax.ClockMem    = [Math]::Max([int]$_.DataMax.ClockMem,$_.Data.ClockMem)
-                                $_.DataMax.Temperature = [Math]::Max([int]$_.DataMax.Temperature,$_.Data.Temperature)
-                                $_.DataMax.FanSpeed    = [Math]::Max([int]$_.DataMax.FanSpeed,$_.Data.FanSpeed)
-                                $_.DataMax.PowerDraw   = [Math]::Max([decimal]$_.DataMax.PowerDraw,$_.Data.PowerDraw)
-                            }
-                        } else {
                             $AdlStats = $null
 
-                            try {
-                                $AdlResult = Invoke-Exe ".\Includes\odvii_$(if ([System.Environment]::Is64BitOperatingSystem) {"x64"} else {"x86"}).exe" -WorkingDirectory $Pwd
-                                if ($AdlResult -notmatch "Failed") {
-                                    $AdlStats = $AdlResult | ConvertFrom-Json -ErrorAction Stop
-                                }
-                            } catch {
-                                if ($Error.Count){$Error.RemoveAt(0)}
+                            $AdlResult = Invoke-Exe ".\Includes\odvii_$(if ([System.Environment]::Is64BitOperatingSystem) {"x64"} else {"x86"}).exe" -WorkingDirectory $Pwd
+                            if ($AdlResult -notmatch "Failed") {
+                                $AdlStats = $AdlResult | ConvertFrom-Json -ErrorAction Stop
                             }
                         
                             if ($AdlStats -and $AdlStats.Count) {
@@ -3747,115 +3762,234 @@ function Update-DeviceInformation {
                                 $DeviceId = 0
 
                                 $AdlStats | Foreach-Object {
+                                    $CPstateMax = [Math]::max([int]($_."Core P_States")-1,0)
+                                    $MPstateMax = [Math]::max([int]($_."Memory P_States")-1,0)
+                                    $PCIBusId   = "$($_."Bus Id" -replace "\..+$")"
 
-                                    $Data = $_
+                                    $Data = [PSCustomObject]@{
+                                        Clock       = [int]($_."Clock Defaults"."Clock P_State $CPstatemax")
+                                        ClockMem    = [int]($_."Memory Defaults"."Clock P_State $MPstatemax")
+                                        FanSpeed    = [int]($_."Fan Speed %")
+                                        Temperature = [int]($_.Temperature)
+                                        PowerDraw   = [int]($_.Wattage)
+                                    }
 
-                                    $Devices | Where-Object Type_Vendor_Index -eq $DeviceId | Foreach-Object {
+                                    $Devices | Where-Object {($_.BusId -and $PCIBusId -and ($_.BusId -eq $PCIBusId)) -or ((-not $_.BusId -or -not $PCIBusId) -and ($_.BusId_Type_Vendor_Index -eq $DeviceId))} | Foreach-Object {
+                                        foreach($Value in @($Data.PSObject.Properties.Name)) {
+                                            $_.Data.$Value = $Data.$Value
+                                        }
 
-                                        $CPstateMax = [Math]::max([int]($Data."Core P_States")-1,0)
-                                        $MPstateMax = [Math]::max([int]($Data."Memory P_States")-1,0)
-
-                                        $_.Data.AdapterId         = ''
-                                        $_.Data.FanSpeed          = [int]($Data."Fan Speed %")
-                                        $_.Data.Clock             = [int]($Data."Clock Defaults"."Clock P_State $CPstatemax")
-                                        $_.Data.ClockMem          = [int]($Data."Memory Defaults"."Clock P_State $MPstatemax")
-                                        $_.Data.Temperature       = [int]($Data.Temperature)
-                                        $_.Data.PowerDraw         = [int]($Data.Wattage)
-                                        $_.Data.Method            = "odvii8"
-
-                                        $_.DataMax.Clock       = [Math]::Max([int]$_.DataMax.Clock,$_.Data.Clock)
-                                        $_.DataMax.ClockMem    = [Math]::Max([int]$_.DataMax.ClockMem,$_.Data.ClockMem)
-                                        $_.DataMax.Temperature = [Math]::Max([int]$_.DataMax.Temperature,$_.Data.Temperature)
-                                        $_.DataMax.FanSpeed    = [Math]::Max([int]$_.DataMax.FanSpeed,$_.Data.FanSpeed)
-                                        $_.DataMax.PowerDraw   = [Math]::Max([decimal]$_.DataMax.PowerDraw,$_.Data.PowerDraw)
+                                        if ($_.Data.FanSpeed -gt 0 -and $_.Data.Temperature -gt 0 -and $_.Data.PowerDraw -gt 0) {
+                                            $_.Data.Method = "odvii8"
+                                        }
                                     }
 
                                     $DeviceId++
                                 }
-                            } else {
+                                if ($DeviceId) {
+                                    $Global:GlobalGPUMethod.odvii8 = "ok"
+                                    $Success++
+                                }
+                            }
 
-                                $DeviceId = 0
+                        } catch {
+                            if ($Error.Count){$Error.RemoveAt(0)}
+                        }
+                    }
 
-                                $AdlResult = Invoke-Exe '.\Includes\OverdriveN.exe' -WorkingDirectory $Pwd -ExpandLines -ExcludeEmptyLines | Where-Object {$_ -notlike "*&???" -and $_ -ne "ADL2_OverdriveN_Capabilities_Get is failed" -and $_ -ne "Failed to load ADL library"}
+                    #
+                    # 2. try Afterburner
+                    #
+                    if ($UseAfterburner -and $Script:abMonitor -and $Script:abControl -and $Global:GlobalGPUMethod.Afterburner -ne "fail" -and ($Devices | Where-Object {$_.Data.Method -eq ""} | Measure-Object).Count) {
+                        try {
+                            if ($abReload) {
+                                if ($Script:abMonitor) {$Script:abMonitor.ReloadAll()}
+                                if ($Script:abControl) {$Script:abControl.ReloadAll()}
+                                $abReload = $false
+                            }
+                            $DeviceId = 0
+                            $Pattern = @{
+                                AMD    = '*Radeon*'
+                                NVIDIA = '*GeForce*'
+                                Intel  = '*Intel*'
+                            }
+                            @($Script:abMonitor.GpuEntries | Where-Object Device -like $Pattern.$Vendor) | ForEach-Object {
+                                $CardData    = $Script:abMonitor.Entries | Where-Object GPU -eq $_.Index
+                                $PowerLimitPercent = [int]$($Script:abControl.GpuEntries[$_.Index].PowerLimitCur)
+                                $Utilization = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?usage$").Data
+                                $PCIBusId    = if ($_.GpuId -match "&BUS_(\d+)&DEV_(\d+)") {"{0:x2}:{1:x2}" -f [int]$Matches[1],[int]$Matches[2]} else {$null}
 
-                                if ($Script:AmdCardsTDP -eq $null) {$Script:AmdCardsTDP = Get-ContentByStreamReader ".\Data\amd-cards-tdp.json" | ConvertFrom-Json -ErrorAction Ignore}
+                                $Data = [PSCustomObject]@{
+                                    Clock       = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?core clock$").Data
+                                    ClockMem    = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?memory clock$").Data
+                                    FanSpeed    = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?fan speed$").Data
+                                    Temperature = [int]$($CardData | Where-Object SrcName -match "^(GPU\d* )?temperature$").Data
+                                    PowerDraw   = $Script:AmdCardsTDP."$($_.Model_Name)" * ((100 + $PowerLimitPercent) / 100) * ($Utilization / 100)
+                                }
 
-                                if ($null -ne $AdlResult) {
-                                    $AdlResult | ForEach-Object {
-                                        [System.Collections.ArrayList]$AdlResultSplit = @('noid',0,1,0,0,100,0,0,'')
-                                        $i=0
-                                        foreach($v in @($_ -split ',')) {
-                                            if ($i -ge $AdlResultSplit.Count) {break}
-                                            if ($i -eq 0) {
-                                                $AdlResultSplit[0] = $v
-                                            } elseif ($i -lt 8) {
-                                                $v = $v -replace "[^\-\d\.]"
-                                                if ($v -match "^-?(\d+|\.\d+|\d+\.\d+)$") {
-                                                    $ibak = $AdlResultSplit[$i]
-                                                    try {
-                                                        if ($i -eq 5 -or $i -eq 7){$AdlResultSplit[$i]=[double]$v}else{$AdlResultSplit[$i]=[int]$v}
-                                                    } catch {
-                                                        if ($Error.Count){$Error.RemoveAt(0)}
-                                                        $AdlResultSplit[$i] = $ibak
-                                                    }
+                                $Devices | Where-Object {($_.BusId -and $PCIBusId -and ($_.BusId -eq $PCIBusId)) -or ((-not $_.BusId -or -not $PCIBusId) -and ($_.BusId_Type_Vendor_Index -eq $DeviceId))} | Foreach-Object {
+                                    $NF = $_.Data.Method -eq ""
+                                    foreach($Value in @($Data.PSObject.Properties.Name)) {
+                                        if ($NF -or $_.Data.$Value -le 0) {$_.Data.$Value = $Data.$Value}
+                                    }
+
+                                    if ($_.Data.FanSpeed -gt 0 -and $_.Data.Temperature -gt 0 -and $_.Data.PowerDraw -gt 0) {
+                                        $_.Data.Method = "$(if ($_.Data.Method) {";"})ab"
+                                    }
+                                }
+                                $DeviceId++
+                            }
+                            if ($DeviceId) {
+                                $Global:GlobalGPUMethod.Afterburner = "ok"
+                                $Success++
+                            }
+                        } catch {
+                            if ($Error.Count){$Error.RemoveAt(0)}
+                        }
+                    }
+
+                    #
+                    # 3. try odvii.exe
+                    #
+                    if ($Global:GlobalGPUMethod.odvii -ne "fail" -and ($Devices | Where-Object {$_.Data.Method -eq ""} | Measure-Object).Count) {
+                        try {
+                            Invoke-Exe ".\Includes\odvii.exe" -ArgumentList "s" -WorkingDirectory $Pwd | Tee-Object -Variable AdlResult | Out-Null
+
+                            if ($AdlResult -match "Gpu" -and $AdlResult -notmatch "Failed") {
+                                $AdlStats = $AdlResult | ConvertFrom-StringData
+
+                                $Values = @{}
+                                $AdlStats.GetEnumerator() | Where-Object {$_.Name -match "Gpu (\d+)"} | Foreach-Object {
+                                    $DeviceId = [int]$Matches[1]
+                                    if (-not $Values.ContainsKey($DeviceId)) {$Values[$DeviceId] = [PSCustomObject]@{}}
+                                    $Values[$DeviceId] | Add-Member ($_.Name -replace "Gpu\s+\d+\s*") ($_.Value) -Force
+                                }
+
+                                if ($Values.Count) {
+
+                                    $Devices | Where-Object {$Values.ContainsKey($_.BusId_Type_Vendor_Index)} | Foreach-Object {
+                                        $DeviceId = $_.BusId_Type_Vendor_Index
+                                        $Data = [PSCustomObject]@{
+                                            FanSpeed    = [int]($Values[$DeviceId].Fan)
+                                            Clock       = [int]($Values[$DeviceId].PSObject.Properties | Where-Object {$_.Name -match "Core Clock"} | Foreach-Object {[int]$_.Value} | Measure-Object -Maximum).Maximum
+                                            ClockMem    = [int]($Values[$DeviceId].PSObject.Properties | Where-Object {$_.Name -match "Mem Clock"} | Foreach-Object {[int]$_.Value} | Measure-Object -Maximum).Maximum
+                                            Temperature = [int]($Values[$DeviceId].Temp)
+                                            PowerDraw   = [int]($Values[$DeviceId].Watts)
+                                        }
+                                        $NF = $_.Data.Method -eq ""
+                                        foreach($Value in @($Data.PSObject.Properties.Name)) {
+                                            if ($NF -or $_.Data.$Value -le 0) {$_.Data.$Value = $Data.$Value}
+                                        }
+
+                                        if ($_.Data.FanSpeed -gt 0 -and $_.Data.Temperature -gt 0 -and $_.Data.PowerDraw -gt 0) {
+                                            $_.Data.Method = "$(if ($_.Data.Method) {";"})odvii"
+                                        }
+                                    }
+                                    $Global:GlobalGPUMethod.odvii = "ok"
+                                    $Success++
+                                }
+                            }
+                        } catch {
+                            if ($Error.Count){$Error.RemoveAt(0)}
+                        }
+                    }
+
+                    #
+                    # 4. try overdriven
+                    #
+                    if ($Global:GlobalGPUMethod.OverdriveN -ne "fail" -and ($Devices | Where-Object {$_.Data.Method -eq ""} | Measure-Object).Count) {
+                        try {
+
+                            $DeviceId = 0
+
+                            $AdlResult = Invoke-Exe '.\Includes\OverdriveN.exe' -WorkingDirectory $Pwd -ExpandLines -ExcludeEmptyLines | Where-Object {$_ -notlike "*&???" -and $_ -ne "ADL2_OverdriveN_Capabilities_Get is failed" -and $_ -ne "Failed to load ADL library"}
+
+                            if ($null -ne $AdlResult) {
+                                $AdlResult | ForEach-Object {
+                                    [System.Collections.ArrayList]$AdlResultSplit = @('noid',0,1,0,0,100,0,0,'')
+                                    $i=0
+                                    foreach($v in @($_ -split ',')) {
+                                        if ($i -ge $AdlResultSplit.Count) {break}
+                                        if ($i -eq 0) {
+                                            $AdlResultSplit[0] = $v
+                                        } elseif ($i -lt 8) {
+                                            $v = $v -replace "[^\-\d\.]"
+                                            if ($v -match "^-?(\d+|\.\d+|\d+\.\d+)$") {
+                                                $ibak = $AdlResultSplit[$i]
+                                                try {
+                                                    if ($i -eq 5 -or $i -eq 7){$AdlResultSplit[$i]=[double]$v}else{$AdlResultSplit[$i]=[int]$v}
+                                                } catch {
+                                                    if ($Error.Count){$Error.RemoveAt(0)}
+                                                    $AdlResultSplit[$i] = $ibak
                                                 }
                                             }
-                                            $i++
                                         }
-                                        if (-not $AdlResultSplit[2]) {$AdlResultSplit[1]=0;$AdlResultSplit[2]=1}
+                                        $i++
+                                    }
+                                    if (-not $AdlResultSplit[2]) {$AdlResultSplit[1]=0;$AdlResultSplit[2]=1}
 
-                                        $Devices | Where-Object Type_Vendor_Index -eq $DeviceId | Foreach-Object {
-                                            $_.Data.AdapterId         = $AdlResultSplit[0]
-                                            $_.Data.FanSpeed          = [int]($AdlResultSplit[1] / $AdlResultSplit[2] * 100)
-                                            $_.Data.Clock             = [int]($AdlResultSplit[3] / 100)
-                                            $_.Data.ClockMem          = [int]($AdlResultSplit[4] / 100)
-                                            $_.Data.Utilization       = [int]$AdlResultSplit[5]
-                                            $_.Data.Temperature       = [int]$AdlResultSplit[6] / 1000
-                                            $_.Data.PowerLimitPercent = 100 + [int]$AdlResultSplit[7]
-                                            $_.Data.PowerDraw         = $Script:AmdCardsTDP."$($_.Model_Name)" * ((100 + $AdlResultSplit[7]) / 100) * ($AdlResultSplit[5] / 100) * ($PowerAdjust[$_.Model] / 100)
-                                            $_.Data.Method            = "tdp"
+                                    $Devices | Where-Object {$_.Type_Vendor_Index -eq $DeviceId} | Foreach-Object {
+                                        $Data = [PSCustomObject]@{
+                                            FanSpeed    = [int]($AdlResultSplit[1] / $AdlResultSplit[2] * 100)
+                                            Clock       = [int]($AdlResultSplit[3] / 100)
+                                            ClockMem    = [int]($AdlResultSplit[4] / 100)
+                                            Temperature = [int]$AdlResultSplit[6] / 1000
+                                            PowerDraw   = $Script:AmdCardsTDP."$($_.Model_Name)" * ((100 + $AdlResultSplit[7]) / 100) * ($AdlResultSplit[5] / 100)
+                                        }
 
-                                            $_.DataMax.Clock       = [Math]::Max([int]$_.DataMax.Clock,$_.Data.Clock)
-                                            $_.DataMax.ClockMem    = [Math]::Max([int]$_.DataMax.ClockMem,$_.Data.ClockMem)
-                                            $_.DataMax.Temperature = [Math]::Max([int]$_.DataMax.Temperature,$_.Data.Temperature)
-                                            $_.DataMax.FanSpeed    = [Math]::Max([int]$_.DataMax.FanSpeed,$_.Data.FanSpeed)
-                                            $_.DataMax.PowerDraw   = [Math]::Max([decimal]$_.DataMax.PowerDraw,$_.Data.PowerDraw)
+                                        $NF = $_.Data.Method -eq ""
+                                        foreach($Value in @($Data.PSObject.Properties.Name)) {
+                                            if ($NF -or $_.Data.$Value -le 0) {$_.Data.$Value = $Data.$Value}
+                                        }
+
+                                        if ($_.Data.FanSpeed -gt 0 -and $_.Data.Temperature -gt 0 -and $_.Data.PowerDraw -gt 0) {
+                                            $_.Data.Method = "$(if ($_.Data.Method) {";"})tdp"
                                         }
                                     }
                                     $DeviceId++
                                 }
-                            }
-                        }
-                    }
-                    elseif ($IsLinux) {
-                        if (Get-Command "rocm-smi" -ErrorAction Ignore) {
-                            try {
-                                $Rocm = Invoke-Exe -FilePath "rocm-smi" -ArgumentList "-f -t -P --json" | ConvertFrom-Json -ErrorAction Ignore
-                            } catch {
-                                if ($Error.Count){$Error.RemoveAt(0)}
-                            }
-
-                            if ($Rocm) {
-                                $DeviceId = 0
-
-                                $Rocm.Psobject.Properties | Sort-Object -Property {[int]($_.Name -replace "[^\d]")} | Foreach-Object {
-                                    $Data = $_.Value
-                                    $Card = [int]($_.Name -replace "[^\d]")
-                                    $Devices | Where-Object {$_.CardId -eq $Card -or ($_.CardId -eq -1 -and $_.Type_Vendor_Index -eq $DeviceId)} | Foreach-Object {
-                                        $_.Data.Temperature       = [decimal]($Data.PSObject.Properties | Where-Object {$_.Name -match "Temperature" -and $_.Name -notmatch "junction"} | Foreach-Object {[decimal]$_.Value} | Measure-Object -Average).Average
-                                        $_.Data.PowerDraw         = [decimal]($Data.PSObject.Properties | Where-Object {$_.Name -match "Power"} | Select-Object -First 1 -ExpandProperty Value)
-                                        $_.Data.FanSpeed          = [int]($Data.PSObject.Properties | Where-Object {$_.Name -match "Fan.+%"} | Select-Object -First 1 -ExpandProperty Value)
-                                        $_.Data.Method            = "rocm"
-
-                                        $_.DataMax.Temperature = [Math]::Max([decimal]$_.DataMax.Temperature,$_.Data.Temperature)
-                                        $_.DataMax.FanSpeed    = [Math]::Max([int]$_.DataMax.FanSpeed,$_.Data.FanSpeed)
-                                        $_.DataMax.PowerDraw   = [Math]::Max([decimal]$_.DataMax.PowerDraw,$_.Data.PowerDraw)
-                                    }
-                                    $DeviceId++
+                                if ($DeviceId) {
+                                    $Global:GlobalGPUMethod.OverdriveN = "ok"
+                                    $Success++
                                 }
                             }
+
+                        } catch {
+                            if ($Error.Count){$Error.RemoveAt(0)}
                         }
                     }
+
+                    if (-not $Success) {
+                        Write-Log -Level Warn "Could not read power data from AMD"
+                    }
+
+                    $Global:GlobalGPUMethod.Keys | Where-Object {$Global:GlobalGPUMethod.$_ -eq ""} | Foreach-Object {$Global:GlobalGPUMethod.$_ = "fail"}
+                }
+                elseif ($IsLinux) {
+                    if (Get-Command "rocm-smi" -ErrorAction Ignore) {
+                        try {
+                            $Rocm = Invoke-Exe -FilePath "rocm-smi" -ArgumentList "-f -t -P --json" | ConvertFrom-Json -ErrorAction Ignore
+                        } catch {
+                            if ($Error.Count){$Error.RemoveAt(0)}
+                        }
+
+                        if ($Rocm) {
+                            $DeviceId = 0
+
+                            $Rocm.Psobject.Properties | Sort-Object -Property {[int]($_.Name -replace "[^\d]")} | Foreach-Object {
+                                $Data = $_.Value
+                                $Card = [int]($_.Name -replace "[^\d]")
+                                $Devices | Where-Object {$_.CardId -eq $Card -or ($_.CardId -eq -1 -and $_.Type_Vendor_Index -eq $DeviceId)} | Foreach-Object {
+                                    $_.Data.Temperature       = [decimal]($Data.PSObject.Properties | Where-Object {$_.Name -match "Temperature" -and $_.Name -notmatch "junction"} | Foreach-Object {[decimal]$_.Value} | Measure-Object -Average).Average
+                                    $_.Data.PowerDraw         = [decimal]($Data.PSObject.Properties | Where-Object {$_.Name -match "Power"} | Select-Object -First 1 -ExpandProperty Value)
+                                    $_.Data.FanSpeed          = [int]($Data.PSObject.Properties | Where-Object {$_.Name -match "Fan.+%"} | Select-Object -First 1 -ExpandProperty Value)
+                                    $_.Data.Method            = "rocm"
+                                }
+                                $DeviceId++
+                            }
+                        }
+                    }
+
                 }
             }
         } catch {
@@ -3887,13 +4021,6 @@ function Update-DeviceInformation {
 
                         if ($_.Data.PowerDefaultLimit) {$_.Data.PowerLimitPercent = [math]::Floor(($_.Data.PowerLimit * 100) / $_.Data.PowerDefaultLimit)}
                         if (-not $_.Data.PowerDraw -and $Script:NvidiaCardsTDP."$($_.Model_Name)") {$_.Data.PowerDraw = $Script:NvidiaCardsTDP."$($_.Model_Name)" * ([double]$_.Data.PowerLimitPercent / 100) * ([double]$_.Data.Utilization / 100)}
-                        if ($_.Data.PowerDraw) {$_.Data.PowerDraw *= ($PowerAdjust[$_.Model] / 100)}
-
-                        $_.DataMax.Clock       = [Math]::Max([int]$_.DataMax.Clock,$_.Data.Clock)
-                        $_.DataMax.ClockMem    = [Math]::Max([int]$_.DataMax.ClockMem,$_.Data.ClockMem)
-                        $_.DataMax.Temperature = [Math]::Max([int]$_.DataMax.Temperature,$_.Data.Temperature)
-                        $_.DataMax.FanSpeed    = [Math]::Max([int]$_.DataMax.FanSpeed,$_.Data.FanSpeed)
-                        $_.DataMax.PowerDraw   = [Math]::Max([decimal]$_.DataMax.PowerDraw,$_.Data.PowerDraw)
 
                         $DeviceId++
                     }
@@ -3902,6 +4029,22 @@ function Update-DeviceInformation {
         } catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Warn "Could not read power data from NVIDIA"
+        }
+
+        try {
+            $Devices | Foreach-Object {
+                if ($_.Data.Clock -ne $null)       {$_.DataMax.Clock    = [Math]::Max([int]$_.DataMax.Clock,$_.Data.Clock)}
+                if ($_.Data.ClockMem -ne $null)    {$_.DataMax.ClockMem = [Math]::Max([int]$_.DataMax.ClockMem,$_.Data.ClockMem)}
+                if ($_.Data.Temperature -ne $null) {$_.DataMax.Temperature = [Math]::Max([decimal]$_.DataMax.Temperature,$_.Data.Temperature)}
+                if ($_.Data.FanSpeed -ne $null)    {$_.DataMax.FanSpeed    = [Math]::Max([int]$_.DataMax.FanSpeed,$_.Data.FanSpeed)}
+                if ($_.Data.PowerDraw -ne $null)   {
+                    $_.Data.PowerDraw    *= ($PowerAdjust[$_.Model] / 100)
+                    $_.DataMax.PowerDraw  = [Math]::Max([decimal]$_.DataMax.PowerDraw,$_.Data.PowerDraw)
+                }
+            }
+        } catch {
+            if ($Error.Count){$Error.RemoveAt(0)}
+            Write-Log -Level Warn "Could not calculate GPU maxium values"
         }
     }
 
@@ -4660,6 +4803,8 @@ function Read-HostArray {
         [Parameter(Mandatory = $False)]
         [Switch]$AllowDuplicates = $False,
         [Parameter(Mandatory = $False)]
+        [Switch]$AllowWildcards = $False,
+        [Parameter(Mandatory = $False)]
         [Array]$Controls = @("exit","cancel","back","save","done","<")
     )
     if ($Default.Count -eq 1 -and $Default[0] -match "[,;]") {[Array]$Default = @([regex]::split($Default[0].Trim(),"\s*[,;]+\s*") | Where-Object {$_ -ne ""} | Select-Object)}
@@ -4680,7 +4825,14 @@ function Read-HostArray {
                 $Result = $Matches[2]
             }
             if ($Characters -eq $null -or $Characters -eq $false) {[String]$Characters=''}
-            [Array]$Result = @($Result -replace "[^$($Characters),;]+","" -split "\s*[,;]+\s*" | Where-Object {$_ -ne ""} | Select-Object)
+            if ($AllowWildcards -and $Valid.Count) {
+                [Array]$Result = @($Result -replace "[^$($Characters)\*\?,;]+","" -split "\s*[,;]+\s*" | Where-Object {$_ -ne ""} | Foreach-Object {
+                    $m = $_
+                    if ($found = $Valid | Where-Object {$_ -like $m} | Select-Object) {$found} else {$m}
+                } | Select-Object)
+            } else {
+                [Array]$Result = @($Result -replace "[^$($Characters),;]+","" -split "\s*[,;]+\s*" | Where-Object {$_ -ne ""} | Select-Object)
+            }
             Switch ($Mode) {
                 "+" {$Result = @($Default | Select-Object) + @($Result | Select-Object); break}
                 "-" {$Result = @($Default | Where-Object {$Result -inotcontains $_}); break}
@@ -5939,7 +6091,7 @@ Param(
     [System.BitConverter]::ToString($md5.ComputeHash($utf8.GetBytes($value))).ToUpper() -replace '-'
 }
 
-function Invoke-GetUrlCurl {
+function Invoke-GetUrl {
 [cmdletbinding()]
 Param(   
     [Parameter(Mandatory = $False)]   
@@ -5969,7 +6121,7 @@ Param(
     [Parameter(Mandatory = $False)]
         [switch]$ForceLocal,
     [Parameter(Mandatory = $False)]
-        [switch]$AsJob
+        [switch]$NoExtraHeaderData
 )
     if ($JobKey -and $JobData) {
         if (-not $ForceLocal -and $JobData.url -notmatch "^server://") {
@@ -6026,60 +6178,124 @@ Param(
 
     $headers_local = @{}
     if ($headers) {$headers.Keys | Foreach-Object {$headers_local[$_] = $headers[$_]}}
-    if ($method -eq "REST" -and -not $headers_local.ContainsKey("Accept")) {$headers_local["Accept"] = "application/json"}
-    if (-not $headers_local.ContainsKey("Cache-Control")) {$headers_local["Cache-Control"] = "no-cache"}
+    if (-not $NoExtraHeaderData) {
+        if ($method -eq "REST" -and -not $headers_local.ContainsKey("Accept")) {$headers_local["Accept"] = "application/json"}
+        if (-not $headers_local.ContainsKey("Cache-Control")) {$headers_local["Cache-Control"] = "no-cache"}
+    }
     if ($user) {$headers_local["Authorization"] = "Basic $([System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("$($user):$($password)")))"}
 
     $ErrorMessage = ''
 
-    if ($IsWindows) {
-        $StatusCode = $null
+    if ($Session.Curl) {
+
+        $TmpFile = $null
 
         try {
-            $CurlHeaders = [String]::Join(" ",@($headers_local.GetEnumerator() | Sort-Object Name | Foreach-Object {"--header `"$($_.Name): $($_.Value)`""}))
+            $CurlHeaders = [String]::Join(" ",@($headers_local.GetEnumerator() | Sort-Object Name | Foreach-Object {"-H `"$($_.Name): $($_.Value)`""}))
             $CurlBody    = ""
-            if ($body) {
-                if ($body -is [hashtable]) {
-                    $body = [String]::Join("&",@($body.GetEnumerator() | Sort-Object Name | Foreach-Object {"$($_.Name)=$(Get-UrlEncode $_.Value)"}))
-                }
-                $CurlBody = " -d `"$($body -replace '"','\"')`""
+
+            if (($pos = $url.IndexOf('?')) -gt 0) {
+                $body = $url.Substring($pos+1)
+                $url  = $url.Substring(0,$pos)
             }
-            $Data = Invoke-Exe ".\Includes\curl\$(if ([Environment]::Is64BitOperatingSystem) {"x64"} else {"x32"})\curl.exe" -ArgumentList "-X $($requestmethod)$($CurlBody) `"$($url)`" $($CurlHeaders) --user-agent `"$($useragent)`" --max-time $($timeout) --connect-timeout $($timeout) --ssl-allow-beast --ssl-no-revoke --max-redirs 5 -s -L -q" -WaitForExit $Timeout
-            if ($Global:LASTEXEEXITCODE -eq 0) {
+
+            if ($body -and ($body -isnot [hashtable] -or $body.Count)) {
+                if ($body -is [hashtable]) {
+                    $out = [ordered]@{}
+                    if (($body.GetEnumerator() | Where-Object {$_.Value -is [object] -and $_.Value.FullName} | Measure-Object).Count) {
+                        $body.GetEnumerator() | Sort-Object Name | Foreach-Object {
+                            $out[$_.Name] = if ($_.Value -is [object] -and $_.Value.FullName) {"@$($_.Value.FullName)"} else {$_.Value -replace '"','\"'}
+                        }
+                        $outcmd = if ($requestmethod -eq "GET") {"-d"} else {"-F"}
+                        $CurlBody = [String]::Join(" ",@($out.GetEnumerator() | Foreach-Object {"$($outcmd) `"$($_.Name)=$($_.Value)`""}))
+                        $CurlBody = "$CurlBody "
+                    } else {
+                        $body = [String]::Join('&',($body.GetEnumerator() | Sort-Object Name | Foreach-Object {"$($_.Name)=$([System.Web.HttpUtility]::UrlEncode($_.Value))"}))
+                    }
+                } 
+                if ($body -isnot [hashtable]) {
+                    if ($body.Length -gt 30000) {
+                        $TmpFile = Join-Path ([System.IO.Path]::GetTempPath()) "$([System.Guid]::NewGuid()).txt"
+                        Set-Content -Value $body -Path $TmpFile
+                        $body = "@$($TmpFile)"
+                    }
+                    $CurlBody = "-d `"$($body -replace '"','\"')`" "
+                }
+            }
+
+            if ($useragent -ne "") {$useragent = "-A `"$($useragent)`" "}
+
+            $CurlCommand = "$(if ($requestmethod -ne "GET") {"-X $($requestmethod)"} else {"-G"}) `"$($url)`" $($CurlBody)$($CurlHeaders) $($useragent)-m $($timeout+5) --connect-timeout $($timeout) --ssl-allow-beast --ssl-no-revoke --max-redirs 5 -k -s -L -q -w `"#~#%{response_code}`""
+
+            $Data = (Invoke-Exe $Session.Curl -ArgumentList $CurlCommand -WaitForExit $Timeout) -split "#~#"
+
+            if ($Session.LogLevel -eq "Debug") {
+                Write-Log -Level Info "CURL[$($Global:LASTEXEEXITCODE)][$($Data[-1])] $($CurlCommand)"
+            }
+
+            if ($Data -and $Data.Count -gt 1 -and $Global:LASTEXEEXITCODE -eq 0 -and $Data[-1] -match "^2\d\d") {
+                $Data = if ($Data.Count -eq 2) {$Data[0]} else {$Data[0..($Data.Count-2)] -join '#~#'}
                 if ($method -eq "REST") {
                     if ($fixbigint) {
                         try {
                             $Data = ([regex]"(?si):\s*(\d{19,})[`r`n,\s\]\}]").Replace($Data,{param($m) $m.Groups[0].Value -replace $m.Groups[1].Value,"$([double]$m.Groups[1].Value)"})
                         } catch {if ($Error.Count){$Error.RemoveAt(0)}}
                     }
-                    try {$Data = ConvertFrom-Json $Data -ErrorAction Stop} catch {if ($Error.Count){$Error.RemoveAt(0)}}
+                    try {$Data = ConvertFrom-Json $Data -ErrorAction Stop} catch {if ($Error.Count){$Error.RemoveAt(0)}; $method = "WEB"}
                 }
                 if ($Data -and $Data.unlocked -ne $null) {$Data.PSObject.Properties.Remove("unlocked")}
             } else {
-                $ErrorMessage = "$($url): Curl-Error $($Global:LASTEXEEXITCODE)"
+                $ErrorMessage = "cURL $($Global:LASTEXEEXITCODE) / $(if ($Data -and $Data.Count -gt 1){"HTTP $($Data[-1])"} else {"Timeout after $($timeout)s"})"
             }
         } catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             $ErrorMessage = "$($_.Exception.Message)"
+        } finally {
+            if ($TmpFile -and (Test-Path $TmpFile)) {
+                Remove-Item $TmpFile -Force -ErrorAction Ignore
+            }
         }
 
     } else {
+
+        $IsForm = $false
+
+        try {
+            if ($body -and ($body -isnot [hashtable] -or $body.Count)) {
+                if ($body -is [hashtable]) {
+                    $IsForm = ($body.GetEnumerator() | Where-Object {$_.Value -is [object] -and $_.Value.FullName} | Measure-Object).Count -gt 0
+                } elseif ($requestmethod -eq "GET") {
+                    $RequestUrl = "$($RequestUrl)$(if ($RequestUrl.IndexOf('?') -gt 0) {'&'} else {'?'})$body"
+                    $body = $null
+                }
+            }
+        } catch {
+            if ($Error.Count){$Error.RemoveAt(0)}
+        }
+
+        $oldProgressPreference = $null
+        if ($Global:ProgressPreference -ne "SilentlyContinue") {
+            $oldProgressPreference = $Global:ProgressPreference
+            $Global:ProgressPreference = "SilentlyContinue"
+        }
 
         if ($Session.IsCore -or ($Session.IsCore -eq $null -and $PSVersionTable.PSVersion -ge (Get-Version "6.1"))) {
             $StatusCode = $null
             $Data       = $null
 
-            $oldProgressPreference = $null
-            if ($Global:ProgressPreference -ne "SilentlyContinue") {
-                $oldProgressPreference = $Global:ProgressPreference
-                $Global:ProgressPreference = "SilentlyContinue"
-            }
-
             try {
                 if ($Session.IsPS7 -or ($Session.IsPS7 -eq $null -and $PSVersionTable.PSVersion -ge (Get-Version "7.0"))) {
-                    $Response = Invoke-WebRequest $RequestUrl -SkipHttpErrorCheck -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
+                    if ($IsForm) {
+                        $Response = Invoke-WebRequest $RequestUrl -SkipHttpErrorCheck -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Form $body
+                    } else {
+                        $Response = Invoke-WebRequest $RequestUrl -SkipHttpErrorCheck -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
+                    }
                 } else {
-                    $Response = Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
+                    if ($IsForm) {
+                        $Response = Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Form $body
+                    } else {
+                        $Response = Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
+                    }
                 }
 
                 $StatusCode = $Response.StatusCode
@@ -6105,7 +6321,6 @@ Param(
                 $ErrorMessage = "$($_.Exception.Message)"
             }
 
-            if ($oldProgressPreference) {$Global:ProgressPreference = $oldProgressPreference}
             if ($ErrorMessage -eq '' -and $StatusCode -ne 200) {
                 if ($StatusCodeObject = Get-HttpStatusCode $StatusCode) {
                     if ($StatusCodeObject.Type -ne "Success") {
@@ -6122,10 +6337,7 @@ Param(
                     $ServicePoint = [System.Net.ServicePointManager]::FindServicePoint($RequestUrl)
                     $Data = Invoke-RestMethod $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
                 } else {
-                    $oldProgressPreference = $Global:ProgressPreference
-                    $Global:ProgressPreference = "SilentlyContinue"
                     $Data = (Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body).Content
-                    $Global:ProgressPreference = $oldProgressPreference
                 }
                 if ($Data -and $Data.unlocked -ne $null) {$Data.PSObject.Properties.Remove("unlocked")}
             } catch {
@@ -6136,200 +6348,16 @@ Param(
                 $ServicePoint = $null
             }
         }
+
+        if ($oldProgressPreference) {$Global:ProgressPreference = $oldProgressPreference}
     }
 
     if ($ErrorMessage -eq '') {$Data}
     if ($ErrorMessage -ne '') {throw $ErrorMessage}
 }
 
-function Invoke-GetUrl {
-[cmdletbinding()]
-Param(   
-    [Parameter(Mandatory = $False)]   
-        [string]$url = "",
-    [Parameter(Mandatory = $False)]   
-        [string]$method = "REST",
-    [Parameter(Mandatory = $False)]   
-        [string]$requestmethod = "",
-    [Parameter(Mandatory = $False)]
-        [int]$timeout = 15,
-    [Parameter(Mandatory = $False)]
-        [hashtable]$body,
-    [Parameter(Mandatory = $False)]
-        [hashtable]$headers,
-    [Parameter(Mandatory = $False)]
-        [string]$user = "",
-    [Parameter(Mandatory = $False)]
-        [string]$password = "",
-    [Parameter(Mandatory = $False)]
-        [string]$useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.181 Safari/537.36",
-    [Parameter(Mandatory = $False)]
-        [bool]$fixbigint = $false,
-    [Parameter(Mandatory = $False)]
-        $JobData,
-    [Parameter(Mandatory = $False)]
-        [string]$JobKey = "",
-    [Parameter(Mandatory = $False)]
-        [switch]$ForceLocal,
-    [Parameter(Mandatory = $False)]
-        [switch]$AsJob
-)
-    if ($JobKey -and $JobData) {
-        if (-not $ForceLocal -and $JobData.url -notmatch "^server://") {
-            $Config = if ($Session.IsDonationRun) {$Session.UserConfig} else {$Session.Config}
-            if ($Config.RunMode -eq "Client" -and $Config.ServerName -and $Config.ServerPort -and (Test-TcpServer $Config.ServerName -Port $Config.ServerPort -Timeout 2)) {
-                $serverbody = @{
-                    url       = $JobData.url
-                    method    = $JobData.method
-                    timeout   = $JobData.timeout
-                    body      = $JobData.body | ConvertTo-Json -Depth 10 -Compress
-                    headers   = $JobData.headers | ConvertTo-Json -Depth 10 -Compress
-                    cycletime = $JobData.cycletime
-                    retry     = $JobData.retry
-                    retrywait = $JobData.retrywait
-                    delay     = $JobData.delay
-                    tag       = $JobData.tag
-                    user      = $JobData.user
-                    password  = $JobData.password
-                    fixbigint = $JobData.fixbigint
-                    jobkey    = $JobKey
-                    machinename = $Session.MachineName
-                    myip      = $Session.MyIP
-                }
-                #Write-ToFile -FilePath "Logs\geturl_$(Get-Date -Format "yyyy-MM-dd").txt" -Message "http://$($Config.ServerName):$($Config.ServerPort)/getjob $(ConvertTo-Json $serverbody)" -Append -Timestamp
-                $Result = Invoke-GetUrl "http://$($Config.ServerName):$($Config.ServerPort)/getjob" -body $serverbody -user $Config.ServerUser -password $Config.ServerPassword -ForceLocal
-                #Write-ToFile -FilePath "Logs\geturl_$(Get-Date -Format "yyyy-MM-dd").txt" -Message ".. $(if ($Result.Status) {"ok!"} else {"failed"})" -Append -Timestamp
-                if ($Result.Status) {return $Result.Content}
-            }
-        }
-
-        $url      = $JobData.url
-        $method   = $JobData.method
-        $timeout  = $JobData.timeout
-        $body     = $JobData.body
-        $headers  = $JobData.headers
-        $user     = $JobData.user
-        $password = $JobData.password
-        $fixbigint= $JobData.fixbigint
-    }
-
-    if ($url -match "^server://(.+)$") {
-        $Config = if ($Session.IsDonationRun) {$Session.UserConfig} else {$Session.Config}
-        if ($Config.RunMode -eq "Client" -and $Config.ServerName -and $Config.ServerPort -and (Test-TcpServer $Config.ServerName -Port $Config.ServerPort -Timeout 2)) {
-            $url           = "http://$($Config.ServerName):$($Config.ServerPort)/$($Matches[1])"
-            $user          = $Config.ServerUser
-            $password      = $Config.ServerPassword
-        } else {
-            return
-        }
-    }
-
-    if (-not $requestmethod) {$requestmethod = if ($body) {"POST"} else {"GET"}}
-    $RequestUrl = $url -replace "{timestamp}",(Get-Date -Format "yyyy-MM-dd_HH-mm-ss") -replace "{unixtimestamp}",(Get-UnixTimestamp)
-
-    $headers_local = @{}
-    if ($headers) {$headers.Keys | Foreach-Object {$headers_local[$_] = $headers[$_]}}
-    if (-not $headers_local.ContainsKey("Cache-Control")) {$headers_local["Cache-Control"] = "no-cache"}
-    if ($user) {$headers_local["Authorization"] = "Basic $([System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("$($user):$($password)")))"}
-
-    if ($AsJob) {
-        $Job = Start-Job -FilePath .\Scripts\GetUrl.ps1 -ArgumentList $RequestUrl,$method,$useragent,$timeout,$requestmethod,$headers_local,$body
-
-        if ($Job) {
-            $Job | Wait-Job -Timeout ($timeout*2) > $null
-            $ErrorMessage = ''
-            if ($Job.state -eq 'Running') {
-                $ErrorMessage = "Time-out while loading $($RequestUrl)"
-                try {$Job | Stop-Job -PassThru | Receive-Job > $null} catch {if ($Error.Count){$Error.RemoveAt(0)}}
-            } else {
-                try {$Data = Receive-Job -Job $Job} catch {if ($Error.Count){$Error.RemoveAt(0)}}
-                if ($Data -and $Data.Data.ErrorMessage -ne $null)  {$ErrorMessage = $Data.Data.ErrorMessage} else {$Data.Data}
-            }
-            try {Remove-Job $Job -Force} catch {if ($Error.Count){$Error.RemoveAt(0)}}
-            if ($ErrorMessage -ne '') {throw $ErrorMessage}
-        }
-    } else {
-
-        $ErrorMessage = ''
-
-        if ($Session.IsCore -or ($Session.IsCore -eq $null -and $PSVersionTable.PSVersion -ge (Get-Version "6.1"))) {
-            $StatusCode = $null
-            $Data       = $null
-
-            $oldProgressPreference = $null
-            if ($Global:ProgressPreference -ne "SilentlyContinue") {
-                $oldProgressPreference = $Global:ProgressPreference
-                $Global:ProgressPreference = "SilentlyContinue"
-            }
-
-            try {
-                if ($Session.IsPS7 -or ($Session.IsPS7 -eq $null -and $PSVersionTable.PSVersion -ge (Get-Version "7.0"))) {
-                    $Response = Invoke-WebRequest $RequestUrl -SkipHttpErrorCheck -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
-                } else {
-                    $Response = Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
-                }
-
-                $StatusCode = $Response.StatusCode
-
-                if ($StatusCode -match "^2\d\d$") {
-                    $Data = $Response.Content
-                    if ($method -eq "REST") {
-                        if ($fixbigint) {
-                            try {
-                                $Data = ([regex]"(?si):\s*(\d{19,})[`r`n,\s\]\}]").Replace($Data,{param($m) $m.Groups[0].Value -replace $m.Groups[1].Value,"$([double]$m.Groups[1].Value)"})
-                            } catch {if ($Error.Count){$Error.RemoveAt(0)}}
-                        }
-                        try {$Data = ConvertFrom-Json $Data -ErrorAction Stop} catch {if ($Error.Count){$Error.RemoveAt(0)}}
-                    }
-                    if ($Data -and $Data.unlocked -ne $null) {$Data.PSObject.Properties.Remove("unlocked")}
-                }
-
-                if ($Response) {
-                    $Response = $null
-                }
-            } catch {
-                if ($Error.Count){$Error.RemoveAt(0)}
-                $ErrorMessage = "$($_.Exception.Message)"
-            }
-
-            if ($oldProgressPreference) {$Global:ProgressPreference = $oldProgressPreference}
-            if ($ErrorMessage -eq '' -and $StatusCode -ne 200) {
-                if ($StatusCodeObject = Get-HttpStatusCode $StatusCode) {
-                    if ($StatusCodeObject.Type -ne "Success") {
-                        $ErrorMessage = "$StatusCode $($StatusCodeObject.Description) ($($StatusCodeObject.Type))"
-                    }
-                } else {
-                    $ErrorMessage = "$StatusCode Very bad! Code not found :("
-                }
-            }
-        } else {
-            try {
-                $ServicePoint = $null
-                if ($method -eq "REST") {
-                    $ServicePoint = [System.Net.ServicePointManager]::FindServicePoint($RequestUrl)
-                    $Data = Invoke-RestMethod $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body
-                } else {
-                    $oldProgressPreference = $Global:ProgressPreference
-                    $Global:ProgressPreference = "SilentlyContinue"
-                    $Data = (Invoke-WebRequest $RequestUrl -UseBasicParsing -UserAgent $useragent -TimeoutSec $timeout -ErrorAction Stop -Method $requestmethod -Headers $headers_local -Body $body).Content
-                    $Global:ProgressPreference = $oldProgressPreference
-                }
-                if ($Data -and $Data.unlocked -ne $null) {$Data.PSObject.Properties.Remove("unlocked")}
-            } catch {
-                if ($Error.Count){$Error.RemoveAt(0)}
-                $ErrorMessage = "$($_.Exception.Message)"
-            } finally {
-                if ($ServicePoint) {$ServicePoint.CloseConnectionGroup("") > $null}
-                $ServicePoint = $null
-            }
-        }
-        if ($ErrorMessage -eq '') {$Data}
-        if ($ErrorMessage -ne '') {throw $ErrorMessage}
-    }
-}
-
 function Invoke-RestMethodAsync {
-[cmdletbinding()]   
+[cmdletbinding()]
 Param(   
     [Parameter(Mandatory = $True)]
         [string]$url,
@@ -7479,6 +7507,104 @@ param (
     }
 }
 
+function Get-HMACSignature {
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory = $true)]
+    [String]$string,
+    [Parameter(Mandatory = $true)]
+    [String]$secret,
+    [Parameter(Mandatory = $false)]
+    [String]$hash = "HMACSHA256"
+)
+
+    $sha = [System.Security.Cryptography.KeyedHashAlgorithm]::Create($hash)
+    $sha.key = [System.Text.Encoding]::UTF8.Getbytes($secret)
+    [System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.Getbytes(${string}))).ToLower() -replace "[^0-9a-z]"
+}
+
+function Invoke-BinanceRequest {
+[cmdletbinding()]   
+param(    
+    [Parameter(Mandatory = $True)]
+    [String]$endpoint,
+    [Parameter(Mandatory = $False)]
+    [String]$key,
+    [Parameter(Mandatory = $False)]
+    [String]$secret,
+    [Parameter(Mandatory = $False)]
+    $params = @{},
+    [Parameter(Mandatory = $False)]
+    [String]$method = "GET",
+    [Parameter(Mandatory = $False)]
+    [String]$base = "https://api.binance.com",
+    [Parameter(Mandatory = $False)]
+    [int]$Timeout = 15,
+    [Parameter(Mandatory = $False)]
+    [int]$Cache = 0,
+    [Parameter(Mandatory = $False)]
+    [switch]$ForceLocal
+)
+
+    $keystr = Get-MD5Hash "$($endpoint)$(Get-HashtableAsJson $params)"
+    if (-not (Test-Path Variable:Global:BinanceCache)) {$Global:BinanceCache = [hashtable]@{}}
+    if (-not $Cache -or -not $Global:BinanceCache[$keystr] -or -not $Global:BinanceCache[$keystr].request -or $Global:BinanceCache[$keystr].last -lt (Get-Date).ToUniversalTime().AddSeconds(-$Cache)) {
+
+        $Remote = $false
+
+        if (-not $ForceLocal) {
+            $Config = if ($Session.IsDonationRun) {$Session.UserConfig} else {$Session.Config}
+
+            if ($Config.RunMode -eq "Client" -and $Config.ServerName -and $Config.ServerPort -and (Test-TcpServer $Config.ServerName -Port $Config.ServerPort -Timeout 2)) {
+                $serverbody = @{
+                    endpoint  = $endpoint
+                    key       = $key
+                    secret    = $secret
+                    params    = $params | ConvertTo-Json -Depth 10 -Compress
+                    method    = $method
+                    base      = $base
+                    timeout   = $timeout
+                    machinename = $Session.MachineName
+                    workername  = $Config.Workername
+                    myip      = $Session.MyIP
+                }
+                try {
+                    $Result = Invoke-GetUrl "http://$($Config.ServerName):$($Config.ServerPort)/getbinance" -body $serverbody -user $Config.ServerUser -password $Config.ServerPassword -ForceLocal
+                    if ($Result.Status) {$Request = $Result.Content;$Remote = $true}
+                } catch {
+                    if ($Error.Count){$Error.RemoveAt(0)}
+                    Write-Log -Level Info "Binance server call: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        if (-not $Remote -and $key -and $secret) {
+            $timestamp = 0
+            try {$timestamp = (Invoke-GetUrl "$($base)/api/v3/time" -timeout 3).serverTime} catch {if ($Error.Count){$Error.RemoveAt(0)}}
+            if (-not $timestamp) {$timestamp = Get-UnixTimestamp -Milliseconds}
+
+            $params["timestamp"] = $timestamp
+            $paramstr = "$(($params.Keys | Sort-Object | Foreach-Object {"$($_)=$([System.Web.HttpUtility]::UrlEncode($params.$_))"}) -join '&')"
+
+            $headers = [hashtable]@{
+                'X-MBX-APIKEY'  = $key
+            }
+            try {
+                $Request = Invoke-GetUrl "$base$endpoint" -timeout $Timeout -headers $headers -requestmethod $method -body "$($paramstr)&signature=$(Get-HMACSignature $paramstr $secret)"
+            } catch {
+                if ($Error.Count){$Error.RemoveAt(0)}
+                "Binance API call: $($_.Exception.Message)"
+                Write-Log -Level Info "Binance API call: $($_.Exception.Message)"
+            }
+        }
+
+        if (-not $Global:BinanceCache[$keystr] -or $Request) {
+            $Global:BinanceCache[$keystr] = [PSCustomObject]@{last = (Get-Date).ToUniversalTime(); request = $Request}
+        }
+    }
+    $Global:BinanceCache[$keystr].request
+}
+
 function Invoke-NHRequest {
 [cmdletbinding()]   
 param(    
@@ -7543,20 +7669,18 @@ param(
 
         if (-not $Remote -and $key -and $secret -and $organizationid) {
             $uuid = [string]([guid]::NewGuid())
-            $timestamp = Get-UnixTimestamp -Milliseconds
-            #$timestamp_nh = Invoke-GetUrl "$($base)/main/api/v2/time" -timeout $Timeout | Select-Object -ExpandProperty serverTime
-            #if ([Math]::Abs($timestamp_nh - $timestamp) -gt 3000) {$timestamp = $timestamp_nh}
+            $timestamp = 0
+            try {$timestamp = (Invoke-GetUrl "$($base)/api/v2/time" -timeout 3).serverTime} catch {if ($Error.Count){$Error.RemoveAt(0)}}
+            if (-not $timestamp) {$timestamp = Get-UnixTimestamp -Milliseconds}
+
             $paramstr = "$(($params.Keys | Foreach-Object {"$($_)=$([System.Web.HttpUtility]::UrlEncode($params.$_))"}) -join '&')"
             $str = "$key`0$timestamp`0$uuid`0`0$organizationid`0`0$($method.ToUpper())`0$endpoint`0$(if ($method -eq "GET") {$paramstr} else {"`0$($params | ConvertTo-Json -Depth 10 -Compress)"})"
-            $sha = [System.Security.Cryptography.KeyedHashAlgorithm]::Create("HMACSHA256")
-            $sha.key = [System.Text.Encoding]::UTF8.Getbytes($secret)
-            $sign = [System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.Getbytes(${str})))
 
             $headers = [hashtable]@{
                 'X-Time'            = $timestamp
                 'X-Nonce'           = $uuid
                 'X-Organization-Id' = $organizationid
-                'X-Auth'            = "$($key):$(($sign -replace '\-').ToLower())"
+                'X-Auth'            = "$($key):$(Get-HMACSignature $str $secret)"
                 'Cache-Control'     = 'no-cache'
             }
             try {
@@ -7577,6 +7701,29 @@ param(
         }
     }
     $Global:NHCache[$keystr].request
+}
+
+function Invoke-Reboot {
+    if ($IsLinux) {
+        if ((Get-Command "Test-OCDaemon" -ErrorAction Ignore) -and (Test-OCDaemon)) {
+            Invoke-OCDaemon -Cmd "reboot" -Quiet > $null
+        } elseif (Test-IsElevated) {
+            Invoke-Exe -FilePath "reboot" -RunAs > $null
+        } else {
+            throw "need to be root to reboot $($Session.MachineName)"
+        }
+    } else {
+        try {
+            Restart-Computer -Force -ErrorAction Stop
+        } catch {
+            if ($Error.Count){$Error.RemoveAt(0)}
+            Write-Log -Level Info "Restart-Computer command failed. Falling back to shutdown."
+            shutdown /r /f /t 10 /c "RainbowMiner scheduled restart" 2>$null
+            if ($LastExitCode -ne 0) {
+                throw "shutdown cannot reboot $($Session.MachineName) ($LastExitCode)"
+            }
+        }
+    }
 }
 
 function Get-WalletWithPaymentId {

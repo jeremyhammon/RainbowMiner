@@ -181,15 +181,135 @@ function Start-Core {
         Write-Log -Level Error "VM detection failed: $($_.Exception.Message)"
     }
     if ($Session.IsVM) {
-        Write-Host "found, some miners will be excluded." -ForegroundColor Red
+        Write-Host "found (some miners will be excluded)" -ForegroundColor Red
     } else {
-        Write-Host "ok, not in a VM" -ForegroundColor Green
+        Write-Host "ok (not in a VM)" -ForegroundColor Green
+    }
+
+    if ($IsWindows -and $false) {
+        Write-Host "Checking for TcpTimeWaitDelay .. " -NoNewline
+        $Tcpip_Warn = ""
+        $Tcpip_Done = ""
+        try {
+            $Tcpip_Parameters = Get-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -ErrorAction Ignore
+            if (-not $Tcpip_Parameters) {
+                $Tcpip_Warn = "No Tcpip Parameters found!"
+            } else {
+                $Tcpip_WhatToDo = ""
+                if ($Tcpip_Parameters.GetValue("TcpTimedWaitDelay") -eq $null) {
+                    $Tcpip_Warn = "TcpTimedWaitDelay not set!"
+                    $Tcpip_WhatToDo = "insert"
+                } elseif ($Tcpip_Parameters.GetValue("TcpTimedWaitDelay") -gt 30) {
+                    $Tcpip_Warn = "TcpTimedWaitDelay is greater than 30!"
+                    $Tcpip_WhatToDo = "update"
+                }
+                if ($Tcpip_WhatToDo -and (Test-IsElevated)) {
+                    try {
+                        Switch ($Tcpip_WhatToDo) {
+                            "insert" {New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name TcpTimedWaitDelay -PropertyType DWord -Value 30 -ErrorAction Stop}
+                            "update" {New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name TcpTimedWaitDelay -Value 30 -ErrorAction Stop}
+                        }
+                        $Tcpip_Done = $Tcpip_WhatToDo
+                    }
+                    catch {
+                        if ($Error.Count){$Error.RemoveAt(0)}
+                        $Tcpip_Done = "manual"
+                    }
+                }
+            }
+        }
+        catch {
+            if ($Error.Count){$Error.RemoveAt(0)}
+            Write-Log -Level Error "TIME_WAIT detection failed: $($_.Exception.Message)"
+        }
+        if ($Tcpip_Warn) {
+            Write-Host "problem!" -ForegroundColor Red
+            Write-Log -Level Warn "$($Tcpip_Warn)$(if ($Tcpip_Done) {": $($Tcpip_Done)"})"
+            if ($Tcpip_Done) {
+                Switch($Tcpip_Done) {
+                    "insert" {
+                        Write-Host "Solved - new registry entry TcpTimedWaitDelay has been created. Please restart your system!" -ForegroundColor Green
+                        break
+                    }
+                    "update" {
+                        Write-Host "Solved - registry entry TcpTimedWaitDelay has been updated. Please restart your system!" -ForegroundColor Green
+                        break
+                    }
+                    default {
+                        Write-Host " "
+                        Write-Host "To set TcpTimedWaitDelay (TIME_WAIT):" -BackgroundColor Yellow -ForegroundColor Black
+                        Write-Host "1. start the regedit command" -ForegroundColor Yellow
+                        Write-Host "2. goto the `"HKEY_LOCAL_MACHINE`\SYSTEM`\CurrentControlSet`\Services`\TCPIP`\Parameters`" subkey" -ForegroundColor Yellow
+                        Write-Host "3. create a new REG_DWORD value named TcpTimedWaitDelay (or edit it, if it already exists)." -ForegroundColor Yellow
+                        Write-Host "4. set the value to 30" -ForegroundColor Yellow
+                        Write-Host "5. stop and restart your system" -ForegroundColor Yellow
+                    }
+                }
+                Write-Host " "
+            }
+        } else {
+            Write-Host "ok" -ForegroundColor Green
+        }
     }
 
     try {
-        Write-Host "Detecting devices .."
+        $Session.Curl = $null
+        Write-Host "Checking for cURL .. " -NoNewline
+        if ($IsWindows) {
+            #if ($CurlCmd = Get-Command "curl.exe" -ErrorAction Ignore) {
+            #    $CurlPath = $CurlCmd.Source
+            #} else {
+                $CurlPath = ".\Includes\curl\$(if ([Environment]::Is64BitOperatingSystem) {"x64"} else {"x32"})\curl.exe"
+            #}
+        } else {
+            if ($CurlCmd = Get-Command "curl" -ErrorAction Ignore) {
+                if ($CurlCmd.CommandType -eq "Application") {
+                    $CurlPath = $CurlCmd.Source
+                }
+            }
+        }
+
+        if ($CurlPath -and (Test-Path $CurlPath)) {
+            $TestOk = $false
+            $CurlTest = Invoke-Exe $CurlPath -ArgumentList "-G `"https://rbminer.net/api/data/hello.txt`" --max-time 5 --connect-timeout 3 --ssl-allow-beast --ssl-no-revoke --max-redirs 5 -s -L -q" -WaitForExit 10
+            if ("$($CurlTest)".Trim() -eq "world") {$TestOk = $true}
+            else {
+                $CurlTest = Invoke-Exe $CurlPath -ArgumentList "-G `"https://httpbin.org/status/200`" -H `"accept: text/plain`" --max-time 5 --connect-timeout 3 --ssl-allow-beast --ssl-no-revoke --max-redirs 5 -s -L -q -w `"%{response_code}`"" -WaitForExit 10
+                if ($CurlTest -eq "200") {$TestOk = $true}
+            }
+            if ($TestOk) {$Session.Curl = $CurlPath}
+        }
+    } catch {
+        if ($Error.Count){$Error.RemoveAt(0)}
+    }
+
+    if ($Session.Curl) {
+        $IsCurl = if (Test-Path ".\curl.txt") {"enabled"} else {"disabled"}
+        Write-Host "ok ($($IsCurl))" -ForegroundColor Green
+        Write-Log -Level Info "Curl $($IsCurl): $($Session.Curl)"
+        if ($IsCurl -ne "enabled") {$Session.Curl = $false}
+    } else {
+        Write-Host "not found" -ForegroundColor Red
+    }
+
+    try {
+        Write-Host "Detecting devices .. " -NoNewline
         $Global:DeviceCache.AllDevices = @(Get-Device "cpu","gpu" -IgnoreOpenCL -Refresh).Where({$_})
         $Session.PhysicalCPUs = $Global:GlobalCPUInfo.PhysicalCPUs
+        $CPUFound   = ($Global:DeviceCache.AllDevices | Where-Object {$_.Type -eq "CPU"} | Measure-Object).Count
+        $NVFound    = ($Global:DeviceCache.AllDevices | Where-Object {$_.Type -eq "GPU" -and $_.Vendor -eq "NVIDIA"} | Measure-Object).Count
+        $AMDFound   = ($Global:DeviceCache.AllDevices | Where-Object {$_.Type -eq "GPU" -and $_.Vendor -eq "AMD"} | Measure-Object).Count
+        $INTELFound = ($Global:DeviceCache.AllDevices | Where-Object {$_.Type -eq "GPU" -and $_.Vendor -eq "INTEL"} | Measure-Object).Count
+        if ($CPUsFound -or $NVFound -or $AMDFound -or $INTELFound) {
+            $DevicesFound = @()
+            if ($CPUFound)   {$DevicesFound += "$($CPUFound) CPU"}
+            if ($NVFound)    {$DevicesFound += "$($NVFound) Nvidia"}
+            if ($AMDFound)   {$DevicesFound += "$($AMDFound) AMD"}
+            if ($INTELFound) {$DevicesFound += "$($IntelFound) Intel"}
+            Write-Host "$($DevicesFound -join ", ") found" -ForegroundColor Green
+        } else {
+            Write-Host "none found!" -ForegroundColor Red
+        }
     }
     catch {
         if ($Error.Count){$Error.RemoveAt(0)}
@@ -1000,7 +1120,7 @@ function Invoke-Core {
                     ([ordered]@{
                         Enable        = Get-Yes $UPool.Enable
                         SSL           = Get-Yes $UPool.SSL
-                        PoolFee       = [double](ConvertTo-Float "$($Upool.PoolFee)")
+                        PoolFee       = [double]"$($Upool.PoolFee -replace ",","." -replace "[^\d\.]")"
                         Currency      = "$(if ($UPool.Currency) {$UPool.Currency} else {$UPool.CoinSymbol})".ToUpper()
                         CoinSymbol    = "$(if ($UPool.CoinSymbol) {$UPool.CoinSymbol} else {$UPool.Currency})".ToUpper()
                     }).GetEnumerator() | Foreach-Object {
@@ -1727,7 +1847,7 @@ function Invoke-Core {
         if (($Pools_WTM | Measure-Object).Count) {
             if ($Session.RoundCounter -eq 0) {Write-Host ".. loading WhatToMine " -NoNewline}
             $start = Get-UnixTimestamp -Milliseconds
-            Get-PoolsContent "WhatToMine" -Parameters @{Pools = $Pools_WTM; StatSpan = $RoundSpan; InfoOnly = $false} | Foreach-Object {
+            Get-PoolsContent "WhatToMine" -Parameters @{Pools = $Pools_WTM; StatSpan = $RoundSpan; InfoOnly = $false; StatAverage = $UserConfig.Pools.WhatToMine.StatAverage; StatAverageStable = $UserConfig.Pools.WhatToMine.StatAverageStable} | Foreach-Object {
                 $Pool_WTM = $_
                 $Pools_WTM | Where-Object {$_.Algorithm -eq $Pool_WTM.Algorithm -and $_.CoinSymbol -eq $Pool_WTM.CoinSymbol} | Foreach-Object {
                    $_.Price         = $Pool_WTM.Price * $_.PenaltyFactor
@@ -1776,7 +1896,7 @@ function Invoke-Core {
         $NewPools.ForEach({
             $Pool_Ix = "$($_.Name)-$($_.Algorithm0)-$($_.CoinSymbol)"
             if ($Pools_PriceCmp[$Pool_Ix] -eq $null) {
-                $Price_Cmp =  $_."$(if (-not $Session.Config.EnableFastSwitching -and ($Session.Config.ForceStablePrice -or -not $_.PaysLive)) {"Stable"})Price"
+                $Price_Cmp  =  $_."$(if (-not $Session.Config.EnableFastSwitching -and ($Session.Config.ForceStablePrice -or -not $_.PaysLive)) {"Stable"})Price"
                 if (-not $_.Exclusive) {
                     $Pool_Rounds = $Pools_Running[$Pool_Ix]
                     if ($Pool_Rounds -ne $null -and ($Session.IsBenchmarkingRun -and $Pools_Benchmarking[$Pool_Ix] -or $Pool_Rounds -lt $Session.Config.MinimumMiningIntervals)) {
@@ -2198,7 +2318,7 @@ function Invoke-Core {
             $Global:Downloader = Start-ThreadJob -InitializationScript ([scriptblock]::Create("Set-Location `"$((Get-Location).Path -replace '"','``"')`"")) -ArgumentList ($Miners_DownloadList) -FilePath .\Scripts\Downloader.ps1
         }
 
-        $Miners_DownloadListPrq = @($AllMiners.Where({$_.PrerequisitePath}) | Select-Object -Unique PrerequisiteURI,PrerequisitePath | Where-Object {-not (Test-Path $_.PrerequisitePath)} | Select-Object @{name = "URI"; expression = {$_.PrerequisiteURI}}, @{name = "Path"; expression = {$_.PrerequisitePath}}, @{name = "IsMiner"; expression = {$false}})
+        $Miners_DownloadListPrq = @($AllMiners.Where({$_.PrerequisitePath}) | Select-Object -Unique PrerequisiteURI,PrerequisitePath | Where-Object {-not (Test-Path "$($_.PrerequisitePath)")} | Select-Object @{name = "URI"; expression = {$_.PrerequisiteURI}}, @{name = "Path"; expression = {$_.PrerequisitePath}}, @{name = "IsMiner"; expression = {$false}})
         if ($Miners_DownloadListPrq.Count -gt 0 -and $Miners_DownloadList.Count -eq 0) {
             $Miners_DownloadMsgPrq = @($AllMiners.Where({$_.PrerequisitePath -and $_.PrerequisiteMsg}).Where({-not (Test-Path $_.PrerequisitePath)}) | Select-Object -Unique PrerequisiteMsg | Foreach-Object {$_.PrerequisiteMsg})
             if ($Global:Downloader.State -ne "Running" -and $Global:DownloaderPrq.State -ne "Running") {
@@ -2704,7 +2824,7 @@ function Invoke-Core {
         if ($Session.Config.Watchdog -and $_.Profit -ne $null) {
             $Miner_Name = $_.Name
             $Miner_DeviceModel = $_.DeviceModel
-            $_.Algorithm | ForEach-Object {
+            $_.Algorithm | Where-Object {-not (Compare-Object @($Miner_Name,$_,$Pools.$_.Name) $Session.Config.ExcludeFromWatchdog -IncludeEqual -ExcludeDifferent)} | ForEach-Object {
                 $Miner_Algorithm = $_
                 $WatchdogTimer = $Global:WatchdogTimers | Where-Object {$_.MinerName -eq $Miner_Name -and $_.PoolName -eq $Pools.$Miner_Algorithm.Name -and $_.Algorithm -eq $Miner_Algorithm}
                 if (-not $WatchdogTimer) {
@@ -3345,31 +3465,15 @@ function Invoke-Core {
     }
 
     if ($Session.Config.EnableRestartComputer -and ($Session.RestartComputer -or $Session.Config.RestartComputerHours -gt 0 -and $Session.StartTimeCore.AddHours($Session.Config.RestartComputerHours) -le (Get-Date).ToUniversalTime())) {
-        Write-Log -Level Warn "Restarting computer now."
+        Write-Log -Level Warn "Restarting computer in 10 seconds."
+        1..10 | Foreach-Object {Start-Sleep -Seconds 1;Write-Log -Level Warn "$(10-$_)"}
         try {
-            if ($IsLinux) {
-                if (Test-OCDaemon) {
-                    Invoke-OCDaemon -Cmd "reboot" -Quiet > $null
-                } else {
-                    Invoke-Exe -FilePath "reboot" -Runas > $null
-                }
-            } else {
-                try {
-                    Restart-Computer -Force -ErrorAction Stop
-                } catch {
-                    if ($Error.Count){$Error.RemoveAt(0)}
-                    Write-Log -Level Info "Restart-Computer command failed. Falling back to shutdown."
-                    shutdown /r /f /t 10 /c "RainbowMiner scheduled restart" 2>$null
-                    if ($LastExitCode -ne 0) {
-                        throw "shutdown cannot reboot $($Session.MachineName) ($LastExitCode)"
-                    }
-                }
-            }
-            $Session.Stopp = $Session.RestartComputer = $true
+            Invoke-Reboot
         } catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Warn "Failed to restart computer: $($_.Exception.Message) on item $($_.Exception.ItemName)"
         }
+        $API.Reboot = $Session.RestartComputer = $false
     }
 
     if ($Session.IsBenchmarkingRun -and -not $Session.Benchmarking) {$Session.IsBenchmarkingRun = $false}
@@ -3837,7 +3941,8 @@ function Invoke-ReportMinerStatus {
     if (-not $ReportAPI) {$ReportAPI = @([PSCustomObject]@{match    = "rbminer.net";apiurl   = "https://rbminer.net/api/report.php"})}
 
     # Create crash alerts
-    $CrashData = "$(
+    $CrashData = $null
+    if ($Session.IsCore -or $Session.Curl) {
         try {
             ConvertTo-Json @($Global:CrashCounter | Foreach-Object {[PSCustomObject]@{
                 Timestamp      = "{0:yyyy-MM-dd HH:mm:ss}" -f $_.TimeStamp
@@ -3848,26 +3953,37 @@ function Invoke-ReportMinerStatus {
                 Device         = $_.Device
                 Algorithm      = $_.Algorithm
                 Pool           = $_.Pool
-            }}) -Depth 10 -Compress
+            }}) -Depth 10 -Compress | Set-Content ".\Data\crashdata.json"
+            if (Test-Path ".\Data\crashdata.json") {
+                $CrashData = Get-Item ".\Data\crashdata.json"
+                if ($CrashData.Length -le 4) {$CrashData = $null}
+            }
         } catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Miner Status $($ReportUrl) failed to create crash alerts. "
         }
-    )"
+    }
 
     $CrashAlert = if ($Session.Config.MinerStatusMaxCrashesPerHour -ge 0 -and $Global:CrashCounter.Count -gt $Session.Config.MinerStatusMaxCrashesPerHour) {$Global:CrashCounter.Count} else {0}
 
-    $DeviceData = "$(
-        if ($Session.ReportDeviceData) {
-            try {
-                ConvertTo-Json $Global:GlobalCachedDevices -Depth 10 -Compress
-            } catch {
-                if ($Error.Count){$Error.RemoveAt(0)}
-                Write-Log -Level Info "Miner Status $($ReportUrl) failed to create device data. "
+    # All device data
+    $DeviceData = $null
+    if ($Session.ReportDeviceData) {
+        try {
+            ConvertTo-Json $Global:GlobalCachedDevices -Depth 10 -Compress | Set-Content ".\Data\devicedata.json"
+            if (Test-Path ".\Data\devicedata.json") {
+                if ($Session.IsCore -or $Session.Curl) {
+                    $DeviceData = Get-Item ".\Data\devicedata.json"
+                } else {
+                    $DeviceData = Get-ContentByStreamReader ".\Data\devicedata.json"
+                }
             }
-            $Session.ReportDeviceData = $false
+        } catch {
+            if ($Error.Count){$Error.RemoveAt(0)}
+            Write-Log -Level Info "Miner Status $($ReportUrl) failed to create device data. "
         }
-    )"
+        $Session.ReportDeviceData = $false
+    }
 
     # Send the request
     try {
@@ -3879,7 +3995,7 @@ function Invoke-ReportMinerStatus {
 
         $ReportAPI | Where-Object {-not $ReportDone -and $ReportUrl -match $_.match} | Foreach-Object {
             $ReportUrl = $_.apiurl
-            $Response = Invoke-GetUrl $ReportUrl -body @{user = $Session.Config.MinerStatusKey; email = $Session.Config.MinerStatusEmail; pushoverkey = $Session.Config.PushOverUserKey; worker = $Session.Config.WorkerName; machinename = $Session.MachineName; machineip = $Session.MyIP; cpu = "$($Global:DeviceCache.DevicesByTypes.CPU.Model_Name | Select-Object -Unique)"; cputemp = "$(($Session.SysInfo.Cpus.Temperature | Measure-Object -Average).Average)"; cpuload = "$($Session.SysInfo.CpuLoad)"; cpupower = "$(($Session.SysInfo.Cpus.PowerDraw | Measure-Object -Sum).Sum)"; version = $Version; status = $Status; profit = "$Profit"; powerdraw = "$PowerDraw"; earnings_avg = "$($Session.Earnings_Avg)"; earnings_1d = "$($Session.Earnings_1d)"; pool_totals = ConvertTo-Json @($Pool_Totals | Select-Object) -Depth 10 -Compress; minerdata = "$(if ($Session.ReportMinerData -and (Test-Path ".\Data\minerdata.json")) {Get-ContentByStreamReader ".\Data\minerdata.json"};$Session.ReportMinerData=$false)"; poolsdata = "$(if ($Session.ReportPoolsData -and (Test-Path ".\Data\poolsdata.json")) {Get-ContentByStreamReader ".\Data\poolsdata.json"};$Session.ReportPoolsData=$false)"; rates = ConvertTo-Json $ReportRates -Depth 10 -Compress; interval = $ReportInterval; uptime = "$((Get-Uptime).TotalSeconds)"; sysuptime = "$((Get-Uptime -System).TotalSeconds)";maxtemp = "$($Session.Config.MinerStatusMaxTemp)"; tempalert=$TempAlert; maxcrashes = "$($Session.Config.MinerStatusMaxCrashesPerHour)"; crashalert=$CrashAlert; crashdata=$CrashData; devices=$DeviceData; data = $minerreport}
+            $Response = Invoke-GetUrl $ReportUrl -body @{user = $Session.Config.MinerStatusKey; email = $Session.Config.MinerStatusEmail; pushoverkey = $Session.Config.PushOverUserKey; worker = $Session.Config.WorkerName; machinename = $Session.MachineName; machineip = $Session.MyIP; cpu = "$($Global:DeviceCache.DevicesByTypes.CPU.Model_Name | Select-Object -Unique)"; cputemp = "$(($Session.SysInfo.Cpus.Temperature | Measure-Object -Average).Average)"; cpuload = "$($Session.SysInfo.CpuLoad)"; cpupower = "$(($Session.SysInfo.Cpus.PowerDraw | Measure-Object -Sum).Sum)"; version = $Version; status = $Status; profit = "$Profit"; powerdraw = "$PowerDraw"; earnings_avg = "$($Session.Earnings_Avg)"; earnings_1d = "$($Session.Earnings_1d)"; pool_totals = ConvertTo-Json @($Pool_Totals | Select-Object) -Depth 10 -Compress; rates = ConvertTo-Json $ReportRates -Depth 10 -Compress; interval = $ReportInterval; uptime = "$((Get-Uptime).TotalSeconds)"; sysuptime = "$((Get-Uptime -System).TotalSeconds)";maxtemp = "$($Session.Config.MinerStatusMaxTemp)"; tempalert=$TempAlert; maxcrashes = "$($Session.Config.MinerStatusMaxCrashesPerHour)"; crashalert=$CrashAlert; crashdata=$CrashData; devices=$DeviceData; data = $minerreport}
             if ($Response -is [string] -or $Response.Status -eq $null) {$ReportStatus = $Response -split "[\r\n]+" | Select-Object -first 1}
             else {
                 $ReportStatus = $Response.Status
@@ -3913,6 +4029,18 @@ function Invoke-ReportMinerStatus {
                 }
             }
             $ReportDone = $true
+            
+            #Upload statistics as separate files
+            if ($Session.IsCore -or $Session.Curl) {
+                if ($Session.ReportMinerData -and (Test-Path ".\Data\minerdata.json")) {
+                    $Response = Invoke-GetUrl $ReportUrl -body @{user = $Session.Config.MinerStatusKey; worker = $Session.Config.WorkerName; version = $Version; minerdata = Get-Item ".\Data\minerdata.json"}
+                    $Session.ReportMinerData = $false
+                }
+                if ($Session.ReportPoolsData -and (Test-Path ".\Data\poolsdata.json")) {
+                    $Response = Invoke-GetUrl $ReportUrl -body @{user = $Session.Config.MinerStatusKey; worker = $Session.Config.WorkerName; version = $Version; poolsdata = Get-Item ".\Data\poolsdata.json"}
+                    $Session.ReportPoolsData = $false
+                }
+            }
         }
         if (-not $ReportDone) {
             $Response = Invoke-GetUrl $ReportUrl -Body @{address = $Session.Config.MinerStatusKey; workername = $Session.Config.WorkerName; version = $Version; status = $Status; profit = $Profit; miners = $minerreport}

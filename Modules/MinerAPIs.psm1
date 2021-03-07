@@ -832,11 +832,8 @@ class BMiner : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api/v1/status/solver" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api/v1/status/solver" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
@@ -845,13 +842,12 @@ class BMiner : Miner {
         }
 
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api/v1/status/stratum" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data | Add-member stratums ($Response | ConvertFrom-Json -ErrorAction Stop).stratums
+            $Data2 = Invoke-TcpRequest "http://$($Server):$($this.Port)/api/v1/status/stratum" -Timeout $Timeout
+            $Data | Add-member stratums $Data2.stratums
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $Index = 0
         $this.Algorithm | Select-Object -Unique | ForEach-Object {
@@ -895,18 +891,14 @@ class Cast : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]$this.Algorithm[0]
         $HashRate_Value = [Double]($Data.devices.hash_rate | Measure-Object -Sum).Sum / 1000
@@ -1128,18 +1120,14 @@ class Eminer : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api/v1/stats" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api/v1/stats" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
         
         $HashRate_Name = [String]$this.Algorithm[0]
         $HashRate_Value = [Double]($Data.total_hashrate_mean | Measure-Object -Sum).Sum
@@ -1172,18 +1160,14 @@ class EnemyZ : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/summary?gpuinfo=1" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/summary?gpuinfo=1" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]$this.Algorithm[0]
 
@@ -1411,18 +1395,14 @@ class Fireice : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api.json" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api.json" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]$this.Algorithm[0]
         $HashRate_Value = [Double]$Data.hashrate.total[0]
@@ -1460,18 +1440,14 @@ class Gminer : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/stat" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/stat" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         #$Version = if ($Data.miner -match "(\d\.[\d\.]+)") {$Matches[1]} else {$null}
 
@@ -1502,7 +1478,7 @@ class Gminer : Miner {
             }
         }
 
-        $this.AddMinerData($Response,$HashRate,$null,$PowerDraw)
+        $this.AddMinerData("",$HashRate,$null,$PowerDraw)
 
         $this.CleanupMinerData()
     }
@@ -1565,19 +1541,14 @@ class GrinPro : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api/status" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            if ($Response.StatusCode -ne 200) {throw}
-            $Data = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api/status" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]$this.Algorithm[0]
         $HashRate_Value = [Double]($Data.workers | Where-Object status -eq "ONLINE" | Select-Object -ExpandProperty graphsPerSecond | Measure-Object -Sum).Sum
@@ -1639,18 +1610,14 @@ class Jceminer : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api.json" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api.json" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]($this.Algorithm -like (Get-Algorithm $Data.algo))
         if (-not $HashRate_Name) {$HashRate_Name = [String]($this.Algorithm -like "$(Get-Algorithm $Data.algo)*")} #temp fix
@@ -1688,19 +1655,14 @@ class Lol : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/summary" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            if ($Response.StatusCode -ne 200) {throw}
-            $Data = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/summary" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name  = [String]$this.Algorithm[0]
         $HashRate_Value = [Double](ConvertFrom-Hash "$($Data.Session.Performance_Summary)$($Data.Session.Performance_Unit -replace "g?/s$")")
@@ -1902,18 +1864,14 @@ class NBminer : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api/v1/status" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api/v1/status" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $ix = if ($this.Algorithm[1]) {1} else {0}
 
@@ -2008,18 +1966,14 @@ class NoncerPro : Miner {
 
         $HashRate   = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = $this.Algorithm[0]
         $HashRate_Value = [Double]$Data.totalHashrate
@@ -2049,18 +2003,14 @@ class Nqminer : Miner {
 
         $HashRate   = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = $this.Algorithm[0]
         $HashRate_Value = [Double]$Data.totalHashrate
@@ -2091,18 +2041,14 @@ class Prospector : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api/v0/hashrates" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api/v0/hashrates" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $Data.coin | Select-Object -Unique | ForEach-Object {
             $HashRate_Name = [String]($this.Algorithm -like (Get-Algorithm $_))
@@ -2285,18 +2231,14 @@ class SrbMiner : Miner {
 
         $HashRate = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]$this.Algorithm[0]
         $HashRate_Value = [double]$Data.HashRate_total_5min
@@ -2330,11 +2272,8 @@ class SrbMinerMulti : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)" -Timeout $Timeout
             $Data = $Data.algorithms | Where-Object {"$(Get-Algorithm $_.name)" -eq [String]$this.BaseAlgorithm[0]}
         }
         catch {
@@ -2342,7 +2281,6 @@ class SrbMinerMulti : Miner {
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]$this.Algorithm[0]
         $HashRate_Value = [double]$Data.hashrate."5min"
@@ -2457,18 +2395,14 @@ class Trex : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/summary" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/summary" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = [String]$this.Algorithm[0]
 
@@ -2695,18 +2629,14 @@ class Xmrig : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api.json" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api.json" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
         
         $HashRate_Name = $this.Algorithm[0]
         $HashRate_Value = [Double]$Data.hashrate.total[0]
@@ -2848,18 +2778,14 @@ class Xmrig3 : Miner {
         $HashRate   = [PSCustomObject]@{}
         $Difficulty = [PSCustomObject]@{}
 
-        $oldProgressPreference = $Global:ProgressPreference
-        $Global:ProgressPreference = "SilentlyContinue"
         try {
-            $Response = Invoke-WebRequest "http://$($Server):$($this.Port)/api.json" -UseBasicParsing -TimeoutSec $Timeout -ErrorAction Stop
-            $Data = $Response | ConvertFrom-Json -ErrorAction Stop
+            $Data = Invoke-GetUrl "http://$($Server):$($this.Port)/api.json" -Timeout $Timeout
         }
         catch {
             if ($Error.Count){$Error.RemoveAt(0)}
             Write-Log -Level Info "Failed to connect to miner ($($this.Name)). "
             return
         }
-        $Global:ProgressPreference = $oldProgressPreference
 
         $HashRate_Name = $this.Algorithm[0]
         $HashRate_Value = [Double]$Data.hashrate.total[0]

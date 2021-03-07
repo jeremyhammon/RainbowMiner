@@ -128,11 +128,8 @@ param(
 
         if (-not $Remote) {
             $str = "$key$nonce$endpoint"
-            $sha = [System.Security.Cryptography.KeyedHashAlgorithm]::Create("HMACSHA1")
-            $sha.key = [System.Text.Encoding]::UTF8.Getbytes($secret)
-            $sign = [System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.Getbytes(${str})))    
             $headers = [hashtable]@{
-	            'x-api-sign' = ($sign -replace '\-').ToLower()
+	            'x-api-sign' = Get-HMACSignature $str $secret "HMACSHA1"
 	            'x-api-key'  = $key
 	            'x-api-nonce'= $nonce
                 'Cache-Control' = 'no-cache'
@@ -140,67 +137,16 @@ param(
 
             $ErrorMessage = ''
 
-            if ($Session.IsPS7 -or ($Session.IsPS7 -eq $null -and $PSVersionTable.PSVersion -ge (Get-Version "7.0"))) {
-                $StatusCode   = $null
-                $Data         = $null
-
-                $oldProgressPreference = $null
-                if ($Global:ProgressPreference -ne "SilentlyContinue") {
-                    $oldProgressPreference = $Global:ProgressPreference
-                    $Global:ProgressPreference = "SilentlyContinue"
+            try {
+                $body = Switch -Regex ($method) {
+                    "^(POST|PUT)$"   {$params_local | ConvertTo-Json -Depth 10 -Compress;Break}
+                    "^(DELETE|GET)$" {if ($params_local.Count) {$params_local} else {$null};Break}
                 }
-
-                try {
-                    $body = Switch -Regex ($method) {
-                        "^(POST|PUT)$"   {$params_local | ConvertTo-Json -Depth 10;Break}
-                        "^(DELETE|GET)$" {if ($params_local.Count) {$params_local} else {$null};Break}
-                    }
-
-                    $Response   = Invoke-WebRequest "$base$endpoint" -SkipHttpErrorCheck -UseBasicParsing -UserAgent $useragent -TimeoutSec $Timeout -ErrorAction Stop -Headers $headers -Method $method -Body $body
-                    $StatusCode = $Response.StatusCode
-
-                    if ($StatusCode -match "^2\d\d$") {
-                        try {$Data = ConvertFrom-Json $Response.Content -ErrorAction Stop} catch {if ($Error.Count){$Error.RemoveAt(0)}}
-                    }
-
-                    if ($Response) {
-                        $Response = $null
-                    }
-
-                } catch {
-                    if ($Error.Count){$Error.RemoveAt(0)}
-                    $ErrorMessage = "$($_.Exception.Message)"
-                }
-
-                if ($oldProgressPreference) {$Global:ProgressPreference = $oldProgressPreference}
-
-                if ($ErrorMessage -eq '' -and $StatusCode -ne 200) {
-                    if ($StatusCodeObject = Get-HttpStatusCode $StatusCode) {
-                        if ($StatusCodeObject.Type -ne "Success") {
-                            $ErrorMessage = "$StatusCode $($StatusCodeObject.Description) ($($StatusCodeObject.Type))"
-                        }
-                    } else {
-                        $ErrorMessage = "$StatusCode Very bad! Code not found :("
-                    }
-                }
-
-            } else {
-                $ServicePoint = $null
-                try {
-                    $body = Switch -Regex ($method) {
-                        "^(POST|PUT)$"   {$params_local | ConvertTo-Json -Depth 10;Break}
-                        "^(DELETE|GET)$" {if ($params_local.Count) {$params_local} else {$null};Break}
-                    }
-                    #Write-Log -Level Info "MiningRigRental call: $($endpoint)"
-                    $ServicePoint = [System.Net.ServicePointManager]::FindServicePoint("$base$endpoint")
-                    $Data = Invoke-RestMethod "$base$endpoint" -UseBasicParsing -UserAgent $useragent -TimeoutSec $Timeout -ErrorAction Stop -Headers $headers -Method $method -Body $body
-                    #$Data = Invoke-GetUrl "$base$endpoint" -timeout $Timeout -headers $headers -requestmethod $method -body $body
-                } catch {
-                    if ($Error.Count){$Error.RemoveAt(0)}
-                    $ErrorMessage = "MiningRigRental call: $($_.Exception.Message)"
-                } finally {
-                    if ($ServicePoint) {$ServicePoint.CloseConnectionGroup("") > $null}
-                }
+                #Write-Log -Level Info "MiningRigRental call: $($endpoint) $($body)"
+                $Data = Invoke-GetUrl "$base$endpoint" -useragent $useragent -timeout $Timeout -headers $headers -requestmethod $method -body $body
+            } catch {
+                if ($Error.Count){$Error.RemoveAt(0)}
+                $ErrorMessage = "$($_.Exception.Message)"
             }
 
             if ($ErrorMessage -ne '') {
